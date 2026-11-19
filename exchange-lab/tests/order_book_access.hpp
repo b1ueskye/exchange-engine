@@ -33,6 +33,23 @@ struct OrderBookTestAccess {
         };
         return side == Side::ask ? read(book.asks_) : read(book.bids_);
     }
+
+    static std::optional<RestingOrder> remove(OrderBook& book, OrderId id, UserId owner) {
+        return book.remove_resting(id, owner);
+    }
+
+    static Status inject_failure(OrderBook& book, const RestingOrder& order,
+                                 void (*fail)()) {
+        return book.add_resting(order, fail);
+    }
+
+    static std::size_t index_bucket_count(const OrderBook& book) {
+        return book.index_.bucket_count();
+    }
+
+    static void rehash_index(OrderBook& book, std::size_t buckets) {
+        book.index_.rehash(buckets);
+    }
 };
 
 }

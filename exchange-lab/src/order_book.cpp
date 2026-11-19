@@ -47,30 +47,17 @@ bool OrderBook::crosses(const RestingOrder& order) const {
     return bid && order.price <= bid.value();
 }
 
-bool OrderBook::contains_order(OrderId id) const {
-    const auto contains = [id](const auto& levels) {
-        for (const auto& [price, level] : levels) {
-            for (const auto& order : level.fifo) {
-                if (order.key.order == id) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    };
-
-    return contains(bids_) || contains(asks_);
-}
-
 template <class Levels>
-Status OrderBook::append_to(Levels& levels, const RestingOrder& order) {
+Status OrderBook::append_to(
+    Levels& levels,
+    const RestingOrder& order,
+    BeforeIndexInsert before_index) {
     auto [it, created] = levels.try_emplace(order.price);
     auto& level = it->second;
     if (!level.fifo.empty() &&
         level.fifo.back().priority_seq >= order.priority_seq) {
         return Status::invalid_input;
     }
-
     const auto total =
         checked_add(level.total_remaining, order.remaining.value());
     if (!total) {
@@ -79,30 +66,124 @@ Status OrderBook::append_to(Levels& levels, const RestingOrder& order) {
 
     try {
         level.fifo.push_back(order);
+        try {
+            if (before_index) {
+                before_index();
+            }
+            const auto node = std::prev(level.fifo.end());
+            const auto inserted = index_.try_emplace(
+                order.key.order, OrderLocation{order.side, order.price, node});
+            if (!inserted.second) {
+                throw std::logic_error{
+                    "duplicate order during index insertion"};
+            }
+        } catch (...) {
+            level.fifo.pop_back();
+            throw;
+        }
     } catch (...) {
         if (created) {
             levels.erase(it);
         }
         throw;
     }
-    level.total_remaining = total.value();
+
+    level.total_remaining = *total;
     return Status::processed;
 }
 
-Status OrderBook::add_resting(const RestingOrder& order) {
+Status OrderBook::add_resting(
+    const RestingOrder& order,
+    BeforeIndexInsert before_index) {
     if (!valid_resting(order)) {
         return Status::invalid_input;
     }
-    if (contains_order(order.key.order)) {
+    if (index_.contains(order.key.order)) {
         return Status::duplicate_order;
     }
     if (crosses(order)) {
         return Status::invalid_input;
     }
-    if (order.side == Side::bid) {
-        return append_to(bids_, order);
+    return order.side == Side::ask ? append_to(asks_, order, before_index)
+                                   : append_to(bids_, order, before_index);
+}
+
+std::optional<RestingOrder> OrderBook::find_order(OrderId id) const {
+    const auto it = index_.find(id);
+    if (it == index_.end()) {
+        return std::nullopt;
     }
-    return append_to(asks_, order);
+    return *it->second.node;
+}
+
+std::optional<RestingOrder>
+OrderBook::remove_resting(OrderId id, UserId owner) {
+    const auto it = index_.find(id);
+    if (it == index_.end() || it->second.node->user != owner) {
+        return std::nullopt;
+    }
+    return it->second.side == Side::ask ? remove_from(asks_, it)
+                                        : remove_from(bids_, it);
+}
+
+template <class Levels>
+RestingOrder OrderBook::remove_from(Levels& levels, Index::iterator indexed) {
+    const auto location = indexed->second;
+    const auto level_it = levels.find(location.price);
+    if (level_it == levels.end()) {
+        throw std::logic_error{"order index points to a missing price level"};
+    }
+
+    auto& level = level_it->second;
+    const RestingOrder removed = *location.node;
+    index_.erase(indexed);
+    level.fifo.erase(location.node);
+    level.total_remaining -= removed.remaining.value();
+    if (level.fifo.empty()) {
+        levels.erase(level_it);
+    }
+    return removed;
+}
+
+bool OrderBook::validate() const {
+    std::size_t count = 0;
+    const auto validate_side = [this, &count](const auto& levels, Side side) {
+        for (const auto& [price, level] : levels) {
+            if (level.fifo.empty() || level.total_remaining <= 0) {
+                return false;
+            }
+            std::int64_t total = 0;
+            Seq previous{0};
+            for (const auto& order : level.fifo) {
+                if (!valid_resting(order) || order.side != side ||
+                    order.price != price || order.priority_seq <= previous) {
+                    return false;
+                }
+                const auto it = index_.find(order.key.order);
+                if (it == index_.end() || it->second.side != side ||
+                    it->second.price != price ||
+                    std::addressof(*it->second.node) != std::addressof(order)) {
+                    return false;
+                }
+                const auto next = checked_add(total, order.remaining.value());
+                if (!next) {
+                    return false;
+                }
+                total = *next;
+                previous = order.priority_seq;
+                ++count;
+            }
+            if (total != level.total_remaining) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    const auto bid = best_bid();
+    const auto ask = best_ask();
+    return (!bid || !ask || *bid < *ask) && validate_side(asks_, Side::ask) &&
+           validate_side(bids_, Side::bid) && count == index_.size();
 }
 
 }
