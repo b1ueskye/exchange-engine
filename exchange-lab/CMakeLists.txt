@@ -48,3 +48,7 @@ add_test(NAME order_book COMMAND order_book_tests)
 add_executable(order_index_tests tests/order_index_test.cpp)
 target_link_libraries(order_index_tests PRIVATE exchange_lab)
 add_test(NAME order_index COMMAND order_index_tests)
+
+add_executable(order_book_snapshot_tests tests/order_book_snapshot_test.cpp)
+target_link_libraries(order_book_snapshot_tests PRIVATE exchange_lab)
+add_test(NAME order_book_snapshot COMMAND order_book_snapshot_tests)

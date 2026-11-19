@@ -10,8 +10,22 @@
 #include <map>
 #include <optional>
 #include <unordered_map>
+#include <vector>
 
 namespace exchange {
+
+struct PriceLevel {
+    Price price;
+    Quantity total_remaining;
+    std::size_t order_count;
+    bool operator==(const PriceLevel&) const = default;
+};
+
+struct L2Snapshot {
+    std::vector<PriceLevel> asks;
+    std::vector<PriceLevel> bids;
+    bool operator==(const L2Snapshot&) const = default;
+};
 
 struct OrderBookTestAccess;
 
@@ -27,6 +41,9 @@ class OrderBook {
     std::optional<Price> best_ask() const;
     std::optional<RestingOrder> find_order(OrderId id) const;
     bool validate() const;
+
+    L2Snapshot snapshot(std::size_t depth) const;
+    std::vector<RestingOrder> resting_orders() const;
 
   private:
     friend struct OrderBookTestAccess;

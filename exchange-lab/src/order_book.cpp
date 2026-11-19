@@ -1,5 +1,6 @@
 #include "exchange/order_book.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace exchange {
@@ -184,6 +185,36 @@ bool OrderBook::validate() const {
     const auto ask = best_ask();
     return (!bid || !ask || *bid < *ask) && validate_side(asks_, Side::ask) &&
            validate_side(bids_, Side::bid) && count == index_.size();
+}
+
+L2Snapshot OrderBook::snapshot(std::size_t depth) const {
+    const auto read_side = [depth](const auto& levels) {
+        const auto limit = std::min(depth, levels.size());
+        std::vector<PriceLevel> result;
+        result.reserve(limit);
+        auto it = levels.begin();
+        for (std::size_t i = 0; i < limit; ++i, ++it) {
+            const auto& [price, level] = *it;
+            result.push_back(
+                {price, Quantity{level.total_remaining}, level.fifo.size()});
+        }
+        return result;
+    };
+
+    return {read_side(asks_), read_side(bids_)};
+}
+
+std::vector<RestingOrder> OrderBook::resting_orders() const {
+    std::vector<RestingOrder> result;
+    result.reserve(index_.size());
+    const auto append = [&result](const auto& levels) {
+        for (const auto& [price, level] : levels) {
+            result.insert(result.end(), level.fifo.begin(), level.fifo.end());
+        }
+    };
+    append(asks_);
+    append(bids_);
+    return result;
 }
 
 }

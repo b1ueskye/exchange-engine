@@ -5,10 +5,12 @@
 
 class TestChecks {
   public:
-    void require(bool condition, const char *label) {
+    void require(bool condition, const char* label) {
         if (!condition) {
             std::cerr << "FAIL: " << label << '\n';
             ++failures_;
+        } else {
+            std::cerr << "PASS: " << label << '\n';
         }
     }
 
