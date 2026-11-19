@@ -1,0 +1,11 @@
+# macOS
+.DS_Store
+
+# CMake and manual build output
+build/
+build-*/
+cmake-build-*/
+CMakeUserPresets.json
+
+# Local VS Code configuration
+.vscode/

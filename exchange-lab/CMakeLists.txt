@@ -1,0 +1,46 @@
+cmake_minimum_required(VERSION 3.20)
+project(exchange_lab LANGUAGES CXX)
+
+set(CMAKE_CXX_EXTENSIONS OFF)
+add_library(exchange_lab STATIC
+    src/notional.cpp
+    src/units.cpp
+    src/model.cpp
+    src/order_book.cpp
+)
+target_compile_features(exchange_lab PUBLIC cxx_std_20)
+target_include_directories(exchange_lab PUBLIC include)
+
+add_executable(exchange_demo app/main.cpp)
+target_link_libraries(exchange_demo PRIVATE exchange_lab)
+
+enable_testing()
+add_executable(exchange_tests tests/notional_test.cpp)
+target_link_libraries(exchange_tests PRIVATE exchange_lab)
+add_test(NAME quote_notional COMMAND exchange_tests)
+
+add_executable(order_draft_tests tests/order_draft_test.cpp)
+target_link_libraries(order_draft_tests PRIVATE exchange_lab)
+add_test(NAME order_draft COMMAND order_draft_tests)
+
+add_executable(lifetime_tests tests/lifetime_test.cpp)
+target_link_libraries(lifetime_tests PRIVATE exchange_lab)
+add_test(NAME lifetime COMMAND lifetime_tests
+         "$<TARGET_FILE_DIR:lifetime_tests>/lifetime_test_output.txt")
+
+
+add_executable(container_tests tests/containers_test.cpp)
+target_link_libraries(container_tests PRIVATE exchange_lab)
+add_test(NAME containers COMMAND container_tests)
+
+add_executable(units_tests tests/units_test.cpp)
+target_link_libraries(units_tests PRIVATE exchange_lab)
+add_test(NAME units COMMAND units_tests)
+
+add_executable(trading_rules_tests tests/trading_rules_test.cpp)
+target_link_libraries(trading_rules_tests PRIVATE exchange_lab)
+add_test(NAME trading_rules COMMAND trading_rules_tests)
+
+add_executable(order_book_tests tests/order_book_test.cpp)
+target_link_libraries(order_book_tests PRIVATE exchange_lab)
+add_test(NAME order_book COMMAND order_book_tests)

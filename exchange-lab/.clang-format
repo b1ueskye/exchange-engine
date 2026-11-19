@@ -1,0 +1,8 @@
+BasedOnStyle: LLVM
+IndentWidth: 4
+ContinuationIndentWidth: 4
+AlignAfterOpenBracket: AlwaysBreak
+BinPackParameters: false
+AllowAllParametersOfDeclarationOnNextLine: false
+FixNamespaceComments: false
+PointerAlignment: Left
