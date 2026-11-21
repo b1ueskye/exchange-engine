@@ -10,14 +10,15 @@ namespace {
 constexpr auto lo = std::numeric_limits<std::int64_t>::min();
 constexpr auto hi = std::numeric_limits<std::int64_t>::max();
 
-std::optional<Money> make_money(CurrencyId currency, std::optional<std::int64_t> units) {
+std::optional<Money> make_money(CurrencyId currency,
+                                std::optional<std::int64_t> units) {
     if (!units) {
         return std::nullopt;
     }
     return Money{currency, *units};
 }
 
-}
+}  // namespace
 
 bool valid_symbol(const SymbolSpec& spec) {
     return spec.symbol.value() != 0 && spec.base.value() != 0 &&
@@ -42,10 +43,8 @@ std::optional<std::int64_t> checked_subtract(std::int64_t a, std::int64_t b) {
 }
 
 std::optional<std::int64_t> checked_multiply(std::int64_t a, std::int64_t b) {
-    if ((a > 0 && b > 0 && a > hi / b) ||
-        (a > 0 && b < 0 && b < lo / a) ||
-        (a < 0 && b > 0 && a < lo / b) ||
-        (a < 0 && b < 0 && a < hi / b)) {
+    if ((a > 0 && b > 0 && a > hi / b) || (a > 0 && b < 0 && b < lo / a) ||
+        (a < 0 && b > 0 && a < lo / b) || (a < 0 && b < 0 && a < hi / b)) {
         return std::nullopt;
     }
     return a * b;
@@ -62,17 +61,22 @@ std::optional<Money> base_amount(Quantity quantity, const SymbolSpec& spec) {
     if (!valid_symbol(spec) || quantity.value() < 0) {
         return std::nullopt;
     }
-    return make_money(spec.base, checked_multiply(quantity.value(), spec.base_scale));
+    return make_money(spec.base,
+                      checked_multiply(quantity.value(), spec.base_scale));
 }
 
-std::optional<Money> quote_notional(Quantity quantity, Price price, const SymbolSpec& spec) {
+std::optional<Money> quote_notional(Quantity quantity, Price price,
+                                    const SymbolSpec& spec) {
     if (!valid_symbol(spec)) {
         return std::nullopt;
     }
-    return make_money(spec.quote, quote_notional(quantity.value(), price.value(), spec.quote_scale));
+    return make_money(
+        spec.quote,
+        quote_notional(quantity.value(), price.value(), spec.quote_scale));
 }
 
-std::optional<Money> bid_hold(Quantity quantity, Price reserve, const SymbolSpec& spec) {
+std::optional<Money> bid_hold(Quantity quantity, Price reserve,
+                              const SymbolSpec& spec) {
     const auto notional = quote_notional(quantity, reserve, spec);
     if (!notional) {
         return std::nullopt;
@@ -97,4 +101,4 @@ std::optional<Money> budget_bid_hold(Quantity quantity, NotionalSteps budget,
     return make_money(spec.quote, checked_add(*principal, *fee));
 }
 
-}
+}  // namespace exchange

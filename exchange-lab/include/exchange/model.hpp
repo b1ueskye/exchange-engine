@@ -137,6 +137,6 @@ bool validate_command(const Command &command);
 std::string describe_event(const Event &event);
 std::string describe_result(const Result &result);
 
-}
+}  // namespace exchange
 
 #endif

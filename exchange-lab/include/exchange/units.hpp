@@ -7,11 +7,13 @@
 
 namespace exchange {
 
-template<class Tag, class Rep = std::int64_t>
+template <class Tag, class Rep = std::int64_t>
 class Scalar {
 public:
     explicit constexpr Scalar(Rep value) : value_{value} {}
-    constexpr Rep value() const { return value_; }
+    constexpr Rep value() const {
+        return value_;
+    }
 
     friend auto operator<=>(const Scalar&, const Scalar&) = default;
 
@@ -59,11 +61,13 @@ std::optional<std::int64_t> checked_subtract(std::int64_t a, std::int64_t b);
 std::optional<std::int64_t> checked_multiply(std::int64_t a, std::int64_t b);
 std::optional<Money> add_money(Money a, Money b);
 std::optional<Money> base_amount(Quantity quantity, const SymbolSpec& spec);
-std::optional<Money> quote_notional(Quantity quantity, Price price, const SymbolSpec& spec);
-std::optional<Money> bid_hold(Quantity quantity, Price reserve, const SymbolSpec& spec);
+std::optional<Money> quote_notional(Quantity quantity, Price price,
+                                    const SymbolSpec& spec);
+std::optional<Money> bid_hold(Quantity quantity, Price reserve,
+                              const SymbolSpec& spec);
 std::optional<Money> budget_bid_hold(Quantity quantity, NotionalSteps budget,
                                      const SymbolSpec& spec);
 
-}
+}  // namespace exchange
 
 #endif

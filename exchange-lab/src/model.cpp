@@ -47,34 +47,34 @@ struct CheckCommand {
 
 const char* status_name(Status status) {
     switch (status) {
-    case Status::processed:
-        return "processed";
-    case Status::invalid_input:
-        return "invalid_input";
-    case Status::duplicate_order:
-        return "duplicate_order";
-    case Status::unknown_symbol:
-        return "unknown_symbol";
-    case Status::unknown_order:
-        return "unknown_order";
-    case Status::insufficient_funds:
-        return "insufficient_funds";
-    case Status::price_over_reserve:
-        return "price_over_reserve";
+        case Status::processed:
+            return "processed";
+        case Status::invalid_input:
+            return "invalid_input";
+        case Status::duplicate_order:
+            return "duplicate_order";
+        case Status::unknown_symbol:
+            return "unknown_symbol";
+        case Status::unknown_order:
+            return "unknown_order";
+        case Status::insufficient_funds:
+            return "insufficient_funds";
+        case Status::price_over_reserve:
+            return "price_over_reserve";
     }
     return "unknown_status";
 }
 
 const char* reason_name(RejectReason reason) {
     switch (reason) {
-    case RejectReason::ioc_remainder:
-        return "ioc_remainder";
-    case RejectReason::insufficient_liquidity:
-        return "insufficient_liquidity";
-    case RejectReason::budget_limit:
-        return "budget_limit";
-    case RejectReason::arithmetic_limit:
-        return "arithmetic_limit";
+        case RejectReason::ioc_remainder:
+            return "ioc_remainder";
+        case RejectReason::insufficient_liquidity:
+            return "insufficient_liquidity";
+        case RejectReason::budget_limit:
+            return "budget_limit";
+        case RejectReason::arithmetic_limit:
+            return "arithmetic_limit";
     }
     return "unknown_reason";
 }
@@ -99,7 +99,7 @@ struct DescribeEvent {
     }
 };
 
-}
+}  // namespace
 
 bool validate_command(const Command& command) {
     return std::visit(CheckCommand{}, command);
@@ -119,4 +119,4 @@ std::string describe_result(const Result& result) {
     return text;
 }
 
-}
+}  // namespace exchange

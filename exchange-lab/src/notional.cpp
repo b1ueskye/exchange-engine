@@ -4,10 +4,9 @@
 
 namespace exchange {
 
-std::optional<std::int64_t> quote_notional(
-    std::int64_t quantity,
-    std::int64_t price,
-    std::int64_t quote_scale) {
+std::optional<std::int64_t> quote_notional(std::int64_t quantity,
+                                           std::int64_t price,
+                                           std::int64_t quote_scale) {
     if (quantity < 0 || price <= 0 || quote_scale <= 0) {
         return std::nullopt;
     }

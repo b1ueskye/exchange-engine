@@ -28,7 +28,6 @@ target_link_libraries(lifetime_tests PRIVATE exchange_lab)
 add_test(NAME lifetime COMMAND lifetime_tests
          "$<TARGET_FILE_DIR:lifetime_tests>/lifetime_test_output.txt")
 
-
 add_executable(container_tests tests/containers_test.cpp)
 target_link_libraries(container_tests PRIVATE exchange_lab)
 add_test(NAME containers COMMAND container_tests)
@@ -60,3 +59,7 @@ add_test(NAME gtc COMMAND gtc_tests)
 add_executable(ioc_tests tests/ioc_test.cpp)
 target_link_libraries(ioc_tests PRIVATE exchange_lab)
 add_test(NAME ioc COMMAND ioc_tests)
+
+add_executable(budget_tests tests/budget_test.cpp)
+target_link_libraries(budget_tests PRIVATE exchange_lab)
+add_test(NAME budget COMMAND budget_tests)

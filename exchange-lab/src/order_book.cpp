@@ -49,10 +49,8 @@ bool OrderBook::crosses(const RestingOrder& order) const {
 }
 
 template <class Levels>
-Status OrderBook::append_to(
-    Levels& levels,
-    const RestingOrder& order,
-    BeforeIndexInsert before_index) {
+Status OrderBook::append_to(Levels& levels, const RestingOrder& order,
+                            BeforeIndexInsert before_index) {
     auto [it, created] = levels.try_emplace(order.price);
     auto& level = it->second;
     if (!level.fifo.empty() &&
@@ -93,9 +91,8 @@ Status OrderBook::append_to(
     return Status::processed;
 }
 
-Status OrderBook::add_resting(
-    const RestingOrder& order,
-    BeforeIndexInsert before_index) {
+Status OrderBook::add_resting(const RestingOrder& order,
+                              BeforeIndexInsert before_index) {
     if (!valid_resting(order)) {
         return Status::invalid_input;
     }
@@ -117,8 +114,8 @@ std::optional<RestingOrder> OrderBook::find_order(OrderId id) const {
     return *it->second.node;
 }
 
-std::optional<RestingOrder>
-OrderBook::remove_resting(OrderId id, UserId owner) {
+std::optional<RestingOrder> OrderBook::remove_resting(OrderId id,
+                                                      UserId owner) {
     const auto it = index_.find(id);
     if (it == index_.end() || it->second.node->user != owner) {
         return std::nullopt;
@@ -218,10 +215,9 @@ std::vector<RestingOrder> OrderBook::resting_orders() const {
 }
 
 template <class Levels>
-OrderBook::MatchPlan OrderBook::plan_against(
-    const Levels& levels,
-    const PlaceOrder& order,
-    std::optional<Price> limit) const {
+OrderBook::MatchPlan OrderBook::plan_against(const Levels& levels,
+                                             const PlaceOrder& order,
+                                             std::optional<Price> limit) const {
     auto remaining = order.quantity.value();
     std::vector<Event> events;
     for (const auto& [price, level] : levels) {
@@ -232,10 +228,10 @@ OrderBook::MatchPlan OrderBook::plan_against(
         for (const auto& maker : level.fifo) {
             const auto amount = std::min(remaining, maker.remaining.value());
             remaining -= amount;
-            events.emplace_back(Trade{
-                maker.key, maker.user, order.key, order.user, order.side, price,
-                Quantity{amount}, amount == maker.remaining.value(),
-                remaining == 0});
+            events.emplace_back(
+                Trade{maker.key, maker.user, order.key, order.user, order.side,
+                      price, Quantity{amount},
+                      amount == maker.remaining.value(), remaining == 0});
             if (remaining == 0) {
                 return {Quantity{0}, std::move(events)};
             }
@@ -244,18 +240,15 @@ OrderBook::MatchPlan OrderBook::plan_against(
     return {Quantity{remaining}, std::move(events)};
 }
 
-OrderBook::MatchPlan OrderBook::plan_match(
-    const PlaceOrder& order,
-    std::optional<Price> limit) const {
+OrderBook::MatchPlan OrderBook::plan_match(const PlaceOrder& order,
+                                           std::optional<Price> limit) const {
     return order.side == Side::bid ? plan_against(asks_, order, limit)
                                    : plan_against(bids_, order, limit);
 }
 
 template <class Levels>
-void OrderBook::decrease_in(
-    Levels& levels,
-    Index::iterator indexed,
-    Quantity amount) {
+void OrderBook::decrease_in(Levels& levels, Index::iterator indexed,
+                            Quantity amount) {
     const auto location = indexed->second;
     auto& maker = *location.node;
     if (amount == maker.remaining) {
@@ -298,15 +291,18 @@ CommandResult OrderBook::place(const PlaceOrder& order, Seq seq) {
         return {Status::duplicate_order, {}};
     }
 
+    if (const auto* budget = std::get_if<BudgetLimit>(&order.constraint)) {
+        return place_budget(order, *budget);
+    }
     const auto* limit = std::get_if<LimitPrice>(&order.constraint);
     if (!limit) {
         return {Status::invalid_input, {}};
     }
     auto plan = plan_match(order, limit->price);
     if (plan.remaining.value() > 0 && limit->policy == LimitPolicy::ioc) {
-        plan.events.emplace_back(RejectRemainder{
-            order.key, order.user, plan.remaining,
-            RejectReason::ioc_remainder});
+        plan.events.emplace_back(RejectRemainder{order.key, order.user,
+                                                 plan.remaining,
+                                                 RejectReason::ioc_remainder});
     } else if (plan.remaining.value() > 0) {
         std::optional<Price> reserve;
         if (order.side == Side::bid) {
@@ -326,4 +322,54 @@ CommandResult OrderBook::place(const PlaceOrder& order, Seq seq) {
     return {Status::processed, std::move(plan.events)};
 }
 
+template <class Levels>
+OrderBook::BudgetTrial OrderBook::trial_budget(const Levels& levels,
+                                               Quantity quantity) const {
+    auto remaining = quantity.value();
+    std::int64_t total = 0;
+    for (const auto& [price, level] : levels) {
+        const auto amount = std::min(remaining, level.total_remaining);
+        const auto line = checked_multiply(amount, price.value());
+        if (!line) {
+            return RejectReason::arithmetic_limit;
+        }
+        const auto next = checked_add(total, *line);
+        if (!next) {
+            return RejectReason::arithmetic_limit;
+        }
+        total = *next;
+        remaining -= amount;
+        if (remaining == 0) {
+            return NotionalSteps{total};
+        }
+    }
+    return RejectReason::insufficient_liquidity;
 }
+
+CommandResult OrderBook::place_budget(const PlaceOrder& order,
+                                      BudgetLimit budget) {
+    const auto reject = [&order](RejectReason reason) -> CommandResult {
+        return {
+            Status::processed,
+            {RejectRemainder{order.key, order.user, order.quantity, reason}}};
+    };
+    const auto trial = order.side == Side::bid
+                           ? trial_budget(asks_, order.quantity)
+                           : trial_budget(bids_, order.quantity);
+    if (const auto* failure = std::get_if<RejectReason>(&trial)) {
+        return reject(*failure);
+    }
+    const auto total = std::get<NotionalSteps>(trial);
+    if (order.side == Side::bid ? total > budget.total : total < budget.total) {
+        return reject(RejectReason::budget_limit);
+    }
+
+    auto plan = plan_match(order, std::nullopt);
+    if (plan.remaining.value() != 0) {
+        throw std::logic_error{"budget trial disagrees with price levels"};
+    }
+    apply_trades(plan.events);
+    return {Status::processed, std::move(plan.events)};
+}
+
+}  // namespace exchange

@@ -107,6 +107,13 @@ class OrderBook {
     template <class Levels>
     void decrease_in(Levels& levels, Index::iterator indexed, Quantity amount);
 
+    using BudgetTrial = std::variant<NotionalSteps, RejectReason>;
+
+    template<class Levels>
+    BudgetTrial trial_budget(const Levels& levels, Quantity quantity) const;
+
+    CommandResult place_budget(const PlaceOrder& order, BudgetLimit budget);
+
     SymbolId symbol_;
     AskLevels asks_;
     BidLevels bids_;
