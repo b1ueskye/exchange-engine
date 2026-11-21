@@ -45,6 +45,8 @@ class OrderBook {
     L2Snapshot snapshot(std::size_t depth) const;
     std::vector<RestingOrder> resting_orders() const;
 
+    CommandResult place(const PlaceOrder& order, Seq seq);
+
   private:
     friend struct OrderBookTestAccess;
 
@@ -85,6 +87,25 @@ class OrderBook {
 
     template <class Levels>
     RestingOrder remove_from(Levels& levels, Index::iterator indexed);
+
+    struct MatchPlan {
+        Quantity remaining;
+        std::vector<Event> events;
+    };
+
+    MatchPlan
+    plan_match(const PlaceOrder& order, std::optional<Price> limit) const;
+    void apply_trades(const std::vector<Event>& events);
+    void decrease_resting(Index::iterator indexed, Quantity amount);
+
+    template <class Levels>
+    MatchPlan plan_against(
+        const Levels& levels,
+        const PlaceOrder& order,
+        std::optional<Price> limit) const;
+
+    template <class Levels>
+    void decrease_in(Levels& levels, Index::iterator indexed, Quantity amount);
 
     SymbolId symbol_;
     AskLevels asks_;

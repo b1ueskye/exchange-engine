@@ -217,4 +217,98 @@ std::vector<RestingOrder> OrderBook::resting_orders() const {
     return result;
 }
 
+template<class Levels>
+OrderBook::MatchPlan OrderBook::plan_against(const Levels& levels, const PlaceOrder& order,
+                                            std::optional<Price> limit) const {
+    auto remaining = order.quantity.value();
+    std::vector<Event> events;
+    for (const auto& [price, level] : levels) {
+        if (limit && (order.side == Side::bid ? price > *limit : price < *limit)) {
+            break;
+        }
+        for (const auto& maker : level.fifo) {
+            const auto amount = std::min(remaining, maker.remaining.value());
+            remaining -= amount;
+            events.emplace_back(Trade{maker.key, maker.user, order.key, order.user, order.side,
+                                      price, Quantity{amount}, amount == maker.remaining.value(),
+                                      remaining == 0});
+            if (remaining == 0) {
+                return {Quantity{0}, std::move(events)};
+            }
+        }
+    }
+    return {Quantity{remaining}, std::move(events)};
+}
+
+OrderBook::MatchPlan OrderBook::plan_match(const PlaceOrder& order,
+                                          std::optional<Price> limit) const {
+    return order.side == Side::bid ? plan_against(asks_, order, limit)
+                                  : plan_against(bids_, order, limit);
+}
+
+template<class Levels>
+void OrderBook::decrease_in(Levels& levels, Index::iterator indexed, Quantity amount) {
+    const auto location = indexed->second;
+    auto& maker = *location.node;
+    if (amount == maker.remaining) {
+        remove_from(levels, indexed);
+        return;
+    }
+    auto& level = levels.at(location.price);
+    maker.remaining = Quantity{maker.remaining.value() - amount.value()};
+    level.total_remaining -= amount.value();
+}
+
+void OrderBook::decrease_resting(Index::iterator indexed, Quantity amount) {
+    if (indexed == index_.end() || amount.value() <= 0 || amount > indexed->second.node->remaining) {
+        throw std::logic_error{"invalid resting order reduction"};
+    }
+    if (indexed->second.side == Side::ask) {
+        decrease_in(asks_, indexed, amount);
+    } else {
+        decrease_in(bids_, indexed, amount);
+    }
+}
+
+void OrderBook::apply_trades(const std::vector<Event>& events) {
+    for (const auto& event : events) {
+        if (const auto* trade = std::get_if<Trade>(&event)) {
+            decrease_resting(index_.find(trade->maker.order), trade->quantity);
+        }
+    }
+}
+
+CommandResult OrderBook::place(const PlaceOrder& order, Seq seq) {
+    if (!validate_command(order) || seq.value() == 0) {
+        return {Status::invalid_input, {}};
+    }
+    if (order.key.symbol != symbol_) {
+        return {Status::unknown_symbol, {}};
+    }
+    if (index_.contains(order.key.order)) {
+        return {Status::duplicate_order, {}};
+    }
+
+    const auto* limit = std::get_if<LimitPrice>(&order.constraint);
+    if (!limit || limit->policy != LimitPolicy::gtc) {
+        return {Status::invalid_input, {}};
+    }
+    auto plan = plan_match(order, limit->price);
+    if (plan.remaining.value() > 0) {
+        std::optional<Price> reserve;
+        if (order.side == Side::bid) {
+            reserve = limit->reserve_bid_price.value_or(limit->price);
+        }
+        const RestingOrder remainder{order.key, order.user, order.side, limit->price,
+                                     plan.remaining, reserve, seq, order.timestamp_ns};
+        const auto status = order.side == Side::ask ? append_to(asks_, remainder, nullptr)
+                                                    : append_to(bids_, remainder, nullptr);
+        if (status != Status::processed) {
+            return {status, {}};
+        }
+    }
+    apply_trades(plan.events);
+    return {Status::processed, std::move(plan.events)};
+}
+
 }
