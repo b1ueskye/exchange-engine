@@ -11,6 +11,10 @@ bool valid_owner(const OrderKey& key, UserId user) {
 }
 
 struct CheckCommand {
+    bool operator()(const RegisterSymbol& cmd) const {
+        return valid_symbol(cmd.spec);
+    }
+
     bool operator()(const PlaceOrder& cmd) const {
         if (!valid_owner(cmd.key, cmd.user) || cmd.quantity.value() <= 0 ||
             (cmd.side != Side::bid && cmd.side != Side::ask) ||
@@ -61,6 +65,8 @@ const char* status_name(Status status) {
             return "insufficient_funds";
         case Status::price_over_reserve:
             return "price_over_reserve";
+        case Status::symbol_exists:
+            return "symbol_exists";
     }
     return "unknown_status";
 }

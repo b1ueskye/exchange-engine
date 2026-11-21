@@ -11,6 +11,7 @@
 #include <optional>
 #include <unordered_map>
 #include <vector>
+#include<memory>
 
 namespace exchange {
 
@@ -49,6 +50,9 @@ public:
     CommandResult cancel(const CancelOrder& command);
     CommandResult reduce(const ReduceOrder& command);
     CommandResult move(const MoveOrder& command, Seq seq);
+
+        static std::unique_ptr<OrderBook> from_resting(
+            SymbolId symbol, const std::vector<RestingOrder>& orders);
 
 private:
     friend struct OrderBookTestAccess;

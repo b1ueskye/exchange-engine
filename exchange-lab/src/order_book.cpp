@@ -489,4 +489,18 @@ CommandResult OrderBook::move(const MoveOrder& command, Seq seq) {
     apply_trades(plan.events);
     return {Status::processed, std::move(plan.events)};
 }
+
+std::unique_ptr<OrderBook> OrderBook::from_resting(
+    SymbolId symbol, const std::vector<RestingOrder>& orders) {
+    auto staged = std::make_unique<OrderBook>(symbol);
+    for (const auto& order : orders) {
+        if (staged->add_resting(order) != Status::processed) {
+            throw std::invalid_argument{"invalid resting state"};
+        }
+    }
+    if (!staged->validate()) {
+        throw std::logic_error{"rebuilt order book is inconsistent"};
+    }
+    return staged;
+}
 }  // namespace exchange

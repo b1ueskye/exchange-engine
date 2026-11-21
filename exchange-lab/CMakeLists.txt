@@ -7,6 +7,7 @@ add_library(exchange_lab STATIC
     src/units.cpp
     src/model.cpp
     src/order_book.cpp
+    src/engine.cpp
 )
 target_compile_features(exchange_lab PUBLIC cxx_std_20)
 target_include_directories(exchange_lab PUBLIC include)
@@ -71,3 +72,7 @@ add_test(NAME order_lifecycle COMMAND order_lifecycle_tests)
 add_executable(book_differential_tests tests/book_differential_test.cpp)
 target_link_libraries(book_differential_tests PRIVATE exchange_lab)
 add_test(NAME book_differential COMMAND book_differential_tests)
+
+add_executable(engine_tests tests/engine_test.cpp)
+target_link_libraries(engine_tests PRIVATE exchange_lab)
+add_test(NAME engine COMMAND engine_tests)
