@@ -52,3 +52,7 @@ add_test(NAME order_index COMMAND order_index_tests)
 add_executable(order_book_snapshot_tests tests/order_book_snapshot_test.cpp)
 target_link_libraries(order_book_snapshot_tests PRIVATE exchange_lab)
 add_test(NAME order_book_snapshot COMMAND order_book_snapshot_tests)
+
+add_executable(gtc_tests tests/gtc_test.cpp)
+target_link_libraries(gtc_tests PRIVATE exchange_lab)
+add_test(NAME gtc COMMAND gtc_tests)
