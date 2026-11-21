@@ -67,3 +67,7 @@ add_test(NAME budget COMMAND budget_tests)
 add_executable(order_lifecycle_tests tests/order_lifecycle_test.cpp)
 target_link_libraries(order_lifecycle_tests PRIVATE exchange_lab)
 add_test(NAME order_lifecycle COMMAND order_lifecycle_tests)
+
+add_executable(book_differential_tests tests/book_differential_test.cpp)
+target_link_libraries(book_differential_tests PRIVATE exchange_lab)
+add_test(NAME book_differential COMMAND book_differential_tests)
