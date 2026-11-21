@@ -217,21 +217,25 @@ std::vector<RestingOrder> OrderBook::resting_orders() const {
     return result;
 }
 
-template<class Levels>
-OrderBook::MatchPlan OrderBook::plan_against(const Levels& levels, const PlaceOrder& order,
-                                            std::optional<Price> limit) const {
+template <class Levels>
+OrderBook::MatchPlan OrderBook::plan_against(
+    const Levels& levels,
+    const PlaceOrder& order,
+    std::optional<Price> limit) const {
     auto remaining = order.quantity.value();
     std::vector<Event> events;
     for (const auto& [price, level] : levels) {
-        if (limit && (order.side == Side::bid ? price > *limit : price < *limit)) {
+        if (limit &&
+            (order.side == Side::bid ? price > *limit : price < *limit)) {
             break;
         }
         for (const auto& maker : level.fifo) {
             const auto amount = std::min(remaining, maker.remaining.value());
             remaining -= amount;
-            events.emplace_back(Trade{maker.key, maker.user, order.key, order.user, order.side,
-                                      price, Quantity{amount}, amount == maker.remaining.value(),
-                                      remaining == 0});
+            events.emplace_back(Trade{
+                maker.key, maker.user, order.key, order.user, order.side, price,
+                Quantity{amount}, amount == maker.remaining.value(),
+                remaining == 0});
             if (remaining == 0) {
                 return {Quantity{0}, std::move(events)};
             }
@@ -240,14 +244,18 @@ OrderBook::MatchPlan OrderBook::plan_against(const Levels& levels, const PlaceOr
     return {Quantity{remaining}, std::move(events)};
 }
 
-OrderBook::MatchPlan OrderBook::plan_match(const PlaceOrder& order,
-                                          std::optional<Price> limit) const {
+OrderBook::MatchPlan OrderBook::plan_match(
+    const PlaceOrder& order,
+    std::optional<Price> limit) const {
     return order.side == Side::bid ? plan_against(asks_, order, limit)
-                                  : plan_against(bids_, order, limit);
+                                   : plan_against(bids_, order, limit);
 }
 
-template<class Levels>
-void OrderBook::decrease_in(Levels& levels, Index::iterator indexed, Quantity amount) {
+template <class Levels>
+void OrderBook::decrease_in(
+    Levels& levels,
+    Index::iterator indexed,
+    Quantity amount) {
     const auto location = indexed->second;
     auto& maker = *location.node;
     if (amount == maker.remaining) {
@@ -260,7 +268,8 @@ void OrderBook::decrease_in(Levels& levels, Index::iterator indexed, Quantity am
 }
 
 void OrderBook::decrease_resting(Index::iterator indexed, Quantity amount) {
-    if (indexed == index_.end() || amount.value() <= 0 || amount > indexed->second.node->remaining) {
+    if (indexed == index_.end() || amount.value() <= 0 ||
+        amount > indexed->second.node->remaining) {
         throw std::logic_error{"invalid resting order reduction"};
     }
     if (indexed->second.side == Side::ask) {
@@ -290,19 +299,25 @@ CommandResult OrderBook::place(const PlaceOrder& order, Seq seq) {
     }
 
     const auto* limit = std::get_if<LimitPrice>(&order.constraint);
-    if (!limit || limit->policy != LimitPolicy::gtc) {
+    if (!limit) {
         return {Status::invalid_input, {}};
     }
     auto plan = plan_match(order, limit->price);
-    if (plan.remaining.value() > 0) {
+    if (plan.remaining.value() > 0 && limit->policy == LimitPolicy::ioc) {
+        plan.events.emplace_back(RejectRemainder{
+            order.key, order.user, plan.remaining,
+            RejectReason::ioc_remainder});
+    } else if (plan.remaining.value() > 0) {
         std::optional<Price> reserve;
         if (order.side == Side::bid) {
             reserve = limit->reserve_bid_price.value_or(limit->price);
         }
-        const RestingOrder remainder{order.key, order.user, order.side, limit->price,
-                                     plan.remaining, reserve, seq, order.timestamp_ns};
-        const auto status = order.side == Side::ask ? append_to(asks_, remainder, nullptr)
-                                                    : append_to(bids_, remainder, nullptr);
+        const RestingOrder remainder{
+            order.key,      order.user, order.side, limit->price,
+            plan.remaining, reserve,    seq,        order.timestamp_ns};
+        const auto status = order.side == Side::ask
+                                ? append_to(asks_, remainder, nullptr)
+                                : append_to(bids_, remainder, nullptr);
         if (status != Status::processed) {
             return {status, {}};
         }
