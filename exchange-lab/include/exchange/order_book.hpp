@@ -30,7 +30,7 @@ struct L2Snapshot {
 struct OrderBookTestAccess;
 
 class OrderBook {
-  public:
+public:
     explicit OrderBook(SymbolId symbol);
     OrderBook(const OrderBook&) = delete;
     OrderBook& operator=(const OrderBook&) = delete;
@@ -46,8 +46,11 @@ class OrderBook {
     std::vector<RestingOrder> resting_orders() const;
 
     CommandResult place(const PlaceOrder& order, Seq seq);
+    CommandResult cancel(const CancelOrder& command);
+    CommandResult reduce(const ReduceOrder& command);
+    CommandResult move(const MoveOrder& command, Seq seq);
 
-  private:
+private:
     friend struct OrderBookTestAccess;
 
     struct Level {
@@ -74,16 +77,13 @@ class OrderBook {
 
     bool valid_resting(const RestingOrder& order) const;
     bool crosses(const RestingOrder& order) const;
-    Status add_resting(
-        const RestingOrder& order,
-        BeforeIndexInsert before_index = nullptr);
+    Status add_resting(const RestingOrder& order,
+                       BeforeIndexInsert before_index = nullptr);
     std::optional<RestingOrder> remove_resting(OrderId id, UserId owner);
 
     template <class Levels>
-    Status append_to(
-        Levels& levels,
-        const RestingOrder& order,
-        BeforeIndexInsert before_index);
+    Status append_to(Levels& levels, const RestingOrder& order,
+                     BeforeIndexInsert before_index);
 
     template <class Levels>
     RestingOrder remove_from(Levels& levels, Index::iterator indexed);
@@ -93,26 +93,31 @@ class OrderBook {
         std::vector<Event> events;
     };
 
-    MatchPlan
-    plan_match(const PlaceOrder& order, std::optional<Price> limit) const;
+    MatchPlan plan_match(const PlaceOrder& order,
+                         std::optional<Price> limit) const;
     void apply_trades(const std::vector<Event>& events);
     void decrease_resting(Index::iterator indexed, Quantity amount);
 
     template <class Levels>
-    MatchPlan plan_against(
-        const Levels& levels,
-        const PlaceOrder& order,
-        std::optional<Price> limit) const;
+    MatchPlan plan_against(const Levels& levels, const PlaceOrder& order,
+                           std::optional<Price> limit) const;
 
     template <class Levels>
     void decrease_in(Levels& levels, Index::iterator indexed, Quantity amount);
 
     using BudgetTrial = std::variant<NotionalSteps, RejectReason>;
 
-    template<class Levels>
+    template <class Levels>
     BudgetTrial trial_budget(const Levels& levels, Quantity quantity) const;
 
     CommandResult place_budget(const PlaceOrder& order, BudgetLimit budget);
+
+    CommandResult reduce_owned(OrderKey key, UserId user,
+                               std::optional<Quantity> requested);
+
+    template <class Levels>
+    Status replace_resting(Levels& levels, Index::iterator indexed,
+                           const RestingOrder& order);
 
     SymbolId symbol_;
     AskLevels asks_;
@@ -120,6 +125,6 @@ class OrderBook {
     Index index_;
 };
 
-}
+}  // namespace exchange
 
 #endif

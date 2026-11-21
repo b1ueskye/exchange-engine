@@ -63,3 +63,7 @@ add_test(NAME ioc COMMAND ioc_tests)
 add_executable(budget_tests tests/budget_test.cpp)
 target_link_libraries(budget_tests PRIVATE exchange_lab)
 add_test(NAME budget COMMAND budget_tests)
+
+add_executable(order_lifecycle_tests tests/order_lifecycle_test.cpp)
+target_link_libraries(order_lifecycle_tests PRIVATE exchange_lab)
+add_test(NAME order_lifecycle COMMAND order_lifecycle_tests)

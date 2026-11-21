@@ -372,4 +372,121 @@ CommandResult OrderBook::place_budget(const PlaceOrder& order,
     return {Status::processed, std::move(plan.events)};
 }
 
+CommandResult OrderBook::reduce_owned(OrderKey key, UserId user,
+                                      std::optional<Quantity> requested) {
+    if (key.symbol != symbol_) {
+        return {Status::unknown_symbol, {}};
+    }
+    const auto indexed = index_.find(key.order);
+    if (indexed == index_.end() || indexed->second.node->user != user) {
+        return {Status::unknown_order, {}};
+    }
+    const auto& order = *indexed->second.node;
+    const auto amount =
+        std::min(requested.value_or(order.remaining), order.remaining);
+
+    CommandResult result{Status::processed,
+                         {Reduce{key, user, order.side, order.price, amount,
+                                 amount == order.remaining}}};
+
+    decrease_resting(indexed, amount);
+    return result;
+}
+
+CommandResult OrderBook::cancel(const CancelOrder& command) {
+    if (!validate_command(command)) {
+        return {Status::invalid_input, {}};
+    }
+    return reduce_owned(command.key, command.user, std::nullopt);
+}
+
+CommandResult OrderBook::reduce(const ReduceOrder& command) {
+    if (!validate_command(command)) {
+        return {Status::invalid_input, {}};
+    }
+    return reduce_owned(command.key, command.user, command.quantity);
+}
+
+template <class Levels>
+Status OrderBook::replace_resting(Levels& levels, Index::iterator indexed,
+                                  const RestingOrder& order) {
+    const auto old_location = indexed->second;
+    const auto old_level = levels.find(old_location.price);
+    const auto old_quantity = old_location.node->remaining.value();
+    auto [target, created] = levels.try_emplace(order.price);
+    auto& level = target->second;
+    const bool same_level = target == old_level;
+    const auto base = level.total_remaining - (same_level ? old_quantity : 0);
+    const auto total = checked_add(base, order.remaining.value());
+    if ((!level.fifo.empty() &&
+         level.fifo.back().priority_seq >= order.priority_seq) ||
+        !total) {
+        return Status::invalid_input;
+    }
+
+    try {
+        level.fifo.push_back(order);
+    } catch (...) {
+        if (created) {
+            levels.erase(target);
+        }
+        throw;
+    }
+
+    indexed->second =
+        OrderLocation{order.side, order.price, std::prev(level.fifo.end())};
+    old_level->second.fifo.erase(old_location.node);
+    level.total_remaining = *total;
+    if (!same_level) {
+        old_level->second.total_remaining -= old_quantity;
+        if (old_level->second.fifo.empty()) {
+            levels.erase(old_level);
+        }
+    }
+    return Status::processed;
+}
+
+CommandResult OrderBook::move(const MoveOrder& command, Seq seq) {
+    if (!validate_command(command) || seq.value() == 0) {
+        return {Status::invalid_input, {}};
+    }
+    if (command.key.symbol != symbol_) {
+        return {Status::unknown_symbol, {}};
+    }
+    const auto indexed = index_.find(command.key.order);
+    if (indexed == index_.end() || indexed->second.node->user != command.user) {
+        return {Status::unknown_order, {}};
+    }
+    auto moved = *indexed->second.node;
+    if (seq <= moved.priority_seq) {
+        return {Status::invalid_input, {}};
+    }
+    if (moved.reserve_bid_price &&
+        moved.reserve_bid_price.value() < command.new_price) {
+        return {Status::price_over_reserve, {}};
+    }
+    moved.price = command.new_price;
+    moved.priority_seq = seq;
+    const PlaceOrder taker{
+        moved.key,
+        moved.user,
+        moved.side,
+        moved.remaining,
+        LimitPrice{moved.price, LimitPolicy::gtc, moved.reserve_bid_price},
+        moved.timestamp_ns};
+    auto plan = plan_match(taker, moved.price);
+    if (plan.remaining.value() == 0) {
+        decrease_resting(indexed, moved.remaining);
+    } else {
+        moved.remaining = plan.remaining;
+        const auto status = moved.side == Side::ask
+                                ? replace_resting(asks_, indexed, moved)
+                                : replace_resting(bids_, indexed, moved);
+        if (status != Status::processed) {
+            return {status, {}};
+        }
+    }
+    apply_trades(plan.events);
+    return {Status::processed, std::move(plan.events)};
+}
 }  // namespace exchange
