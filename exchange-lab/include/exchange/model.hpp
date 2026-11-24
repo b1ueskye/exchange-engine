@@ -107,7 +107,7 @@ enum class Status {
     account_not_empty,
     duplicate_funding,
     stale_funding,
-    settlement_required,
+    settlement_failed,
 };
 
 enum class RejectReason {

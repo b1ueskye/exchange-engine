@@ -96,8 +96,8 @@ const char* status_name(Status status) {
             return "duplicate_funding";
         case Status::stale_funding:
             return "stale_funding";
-        case Status::settlement_required:
-            return "settlement_required";
+        case Status::settlement_failed:
+            return "settlement_failed";
     }
     return "unknown_status";
 }

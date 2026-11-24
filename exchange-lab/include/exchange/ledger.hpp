@@ -8,6 +8,8 @@
 
 namespace exchange {
 
+class OrderBook;
+
 std::optional<Money> required_hold(const PlaceOrder& order,
                                    const SymbolSpec& spec);
 
@@ -21,9 +23,20 @@ public:
 
     std::optional<Money> available(UserId user, CurrencyId currency) const;
     std::optional<Money> held(OrderKey key) const;
+    Money fees(CurrencyId currency) const;
     void swap(Ledger& other) noexcept;
 
 private:
+    friend class Engine;
+
+    bool consume(OrderKey key, UserId user, Money amount);
+    bool credit(UserId user, Money amount);
+    bool apply_trade(const Trade& trade, const SymbolSpec& spec);
+    bool align_hold(OrderKey key, const OrderBook& book,
+                    const SymbolSpec& spec);
+    bool apply_spot(OrderKey primary, const std::vector<Event>& events,
+                    const OrderBook& book, const SymbolSpec& spec);
+
     struct Account {
         std::map<CurrencyId, std::int64_t> balances;
         std::uint64_t last_funding{};
@@ -40,6 +53,7 @@ private:
     std::map<UserId, Account> accounts_;
     std::map<HoldKey, Hold> holds_;
     std::map<CurrencyId, std::int64_t> net_deposits_;
+    std::map<CurrencyId, std::int64_t> fees_;
 };
 
 }  // namespace exchange

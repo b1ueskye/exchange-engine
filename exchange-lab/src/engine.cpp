@@ -3,6 +3,7 @@
 #include <limits>
 #include <stdexcept>
 #include <type_traits>
+#include <utility>
 
 namespace exchange {
 
@@ -23,7 +24,9 @@ CommandResult Engine::dispatch(const RegisterSymbol& command, Seq) {
 }
 
 CommandResult Engine::dispatch(const AddUser& command, Seq) {
-    return {validate_command(command) ? ledger_.add_user(command.user) : Status::invalid_input, {}};
+    return {validate_command(command) ? ledger_.add_user(command.user)
+                                      : Status::invalid_input,
+            {}};
 }
 
 CommandResult Engine::dispatch(const AdjustBalance& command, Seq) {
@@ -31,11 +34,15 @@ CommandResult Engine::dispatch(const AdjustBalance& command, Seq) {
 }
 
 CommandResult Engine::dispatch(const SuspendUser& command, Seq) {
-    return {validate_command(command) ? ledger_.suspend(command.user) : Status::invalid_input, {}};
+    return {validate_command(command) ? ledger_.suspend(command.user)
+                                      : Status::invalid_input,
+            {}};
 }
 
 CommandResult Engine::dispatch(const ResumeUser& command, Seq) {
-    return {validate_command(command) ? ledger_.resume(command.user) : Status::invalid_input, {}};
+    return {validate_command(command) ? ledger_.resume(command.user)
+                                      : Status::invalid_input,
+            {}};
 }
 
 template <class T>
@@ -49,8 +56,17 @@ CommandResult Engine::dispatch(const T& command, Seq seq) {
     }
 
     auto& market = found->second;
-    // todo : consider a more efficient way to stage the order book changes
-    // without copying all resting orders
+    auto staged_ledger = ledger_;
+    if constexpr (std::is_same_v<T, PlaceOrder>) {
+        if (market.book->find_order(command.key.order)) {
+            return {Status::duplicate_order, {}};
+        }
+        const auto frozen = staged_ledger.freeze(command, market.spec);
+        if (frozen != Status::processed) {
+            return {frozen, {}};
+        }
+    }
+
     auto staged = OrderBook::from_resting(market.spec.symbol,
                                           market.book->resting_orders());
     auto result = [&] {
@@ -65,24 +81,28 @@ CommandResult Engine::dispatch(const T& command, Seq seq) {
             return staged->move(command, seq);
         }
     }();
-
     if (result.status != Status::processed) {
         return result;
     }
-    if constexpr (std::is_same_v<T, PlaceOrder>) {
-        if (!result.events.empty()) {
-            return {Status::settlement_required, {}};
+    if constexpr (std::is_same_v<T, MoveOrder>) {
+        const auto original = market.book->find_order(command.key.order);
+        if (original && original->side == Side::ask) {
+            const auto per_lot =
+                quote_notional(Quantity{1}, command.new_price, market.spec);
+            if (!per_lot || per_lot->units < market.spec.taker_fee_per_lot) {
+                return {Status::invalid_input, {}};
+            }
         }
-        auto staged_ledger = ledger_;
-        const auto status = staged_ledger.freeze(command, market.spec);
-        if (status != Status::processed) {
-            return {status, {}};
-        }
-        market.book.swap(staged);
-        ledger_.swap(staged_ledger);
-        return result;
     }
-    return {Status::settlement_required, {}};
+    if (!staged_ledger.apply_spot(command.key, result.events, *staged,
+                                  market.spec)) {
+        return {Status::settlement_failed, {}};
+    }
+    // TODO: consider a more efficient swap or move operation for the order book
+    // and ledger
+    market.book.swap(staged);
+    ledger_.swap(staged_ledger);
+    return result;
 }
 
 Result Engine::execute(const Command& command) {

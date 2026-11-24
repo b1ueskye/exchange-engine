@@ -81,3 +81,7 @@ add_test(NAME engine COMMAND engine_tests)
 add_executable(ledger_tests tests/ledger_test.cpp)
 target_link_libraries(ledger_tests PRIVATE exchange_lab)
 add_test(NAME ledger COMMAND ledger_tests)
+
+add_executable(settlement_tests tests/settlement_test.cpp)
+target_link_libraries(settlement_tests PRIVATE exchange_lab)
+add_test(NAME settlement COMMAND settlement_tests)
