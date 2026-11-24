@@ -120,3 +120,8 @@ add_executable(spsc_tests tests/spsc_test.cpp)
 target_link_libraries(spsc_tests PRIVATE exchange_lab Threads::Threads)
 add_test(NAME spsc COMMAND spsc_tests)
 set_tests_properties(spsc PROPERTIES TIMEOUT 15)
+
+add_executable(async_engine_tests tests/async_engine_test.cpp)
+target_link_libraries(async_engine_tests PRIVATE exchange_lab Threads::Threads)
+add_test(NAME async_engine COMMAND async_engine_tests)
+set_tests_properties(async_engine PROPERTIES TIMEOUT 20)
