@@ -8,6 +8,7 @@ add_library(exchange_lab STATIC
     src/model.cpp
     src/order_book.cpp
     src/engine.cpp
+    src/ledger.cpp
 )
 target_compile_features(exchange_lab PUBLIC cxx_std_20)
 target_include_directories(exchange_lab PUBLIC include)
@@ -76,3 +77,7 @@ add_test(NAME book_differential COMMAND book_differential_tests)
 add_executable(engine_tests tests/engine_test.cpp)
 target_link_libraries(engine_tests PRIVATE exchange_lab)
 add_test(NAME engine COMMAND engine_tests)
+
+add_executable(ledger_tests tests/ledger_test.cpp)
+target_link_libraries(ledger_tests PRIVATE exchange_lab)
+add_test(NAME ledger COMMAND ledger_tests)

@@ -58,14 +58,28 @@ struct MoveOrder {
     Price new_price;
 };
 
-struct RegisterSymbol
-{
+struct RegisterSymbol {
     SymbolSpec spec;
 };
 
+struct AddUser {
+    UserId user;
+};
+struct AdjustBalance {
+    UserId user;
+    Money amount;
+    std::uint64_t funding_id;
+};
+struct SuspendUser {
+    UserId user;
+};
+struct ResumeUser {
+    UserId user;
+};
 
-using Command = std::variant<PlaceOrder, CancelOrder, ReduceOrder, MoveOrder, RegisterSymbol>;
-
+using Command = std::variant<PlaceOrder, CancelOrder, ReduceOrder, MoveOrder,
+                             RegisterSymbol, AddUser, AdjustBalance,
+                             SuspendUser, ResumeUser>;
 struct RestingOrder {
     OrderKey key;
     UserId user;
@@ -86,7 +100,14 @@ enum class Status {
     unknown_order,
     insufficient_funds,
     price_over_reserve,
-    symbol_exists
+    symbol_exists,
+    unknown_user,
+    user_suspended,
+    user_exists,
+    account_not_empty,
+    duplicate_funding,
+    stale_funding,
+    settlement_required,
 };
 
 enum class RejectReason {

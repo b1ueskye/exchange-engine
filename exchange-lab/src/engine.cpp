@@ -22,6 +22,22 @@ CommandResult Engine::dispatch(const RegisterSymbol& command, Seq) {
     return {catalog_.add(command.spec), {}};
 }
 
+CommandResult Engine::dispatch(const AddUser& command, Seq) {
+    return {validate_command(command) ? ledger_.add_user(command.user) : Status::invalid_input, {}};
+}
+
+CommandResult Engine::dispatch(const AdjustBalance& command, Seq) {
+    return {ledger_.adjust(command), {}};
+}
+
+CommandResult Engine::dispatch(const SuspendUser& command, Seq) {
+    return {validate_command(command) ? ledger_.suspend(command.user) : Status::invalid_input, {}};
+}
+
+CommandResult Engine::dispatch(const ResumeUser& command, Seq) {
+    return {validate_command(command) ? ledger_.resume(command.user) : Status::invalid_input, {}};
+}
+
 template <class T>
 CommandResult Engine::dispatch(const T& command, Seq seq) {
     if (!validate_command(command)) {
@@ -50,10 +66,23 @@ CommandResult Engine::dispatch(const T& command, Seq seq) {
         }
     }();
 
-    if (result.status == Status::processed) {
-        market.book.swap(staged);
+    if (result.status != Status::processed) {
+        return result;
     }
-    return result;
+    if constexpr (std::is_same_v<T, PlaceOrder>) {
+        if (!result.events.empty()) {
+            return {Status::settlement_required, {}};
+        }
+        auto staged_ledger = ledger_;
+        const auto status = staged_ledger.freeze(command, market.spec);
+        if (status != Status::processed) {
+            return {status, {}};
+        }
+        market.book.swap(staged);
+        ledger_.swap(staged_ledger);
+        return result;
+    }
+    return {Status::settlement_required, {}};
 }
 
 Result Engine::execute(const Command& command) {

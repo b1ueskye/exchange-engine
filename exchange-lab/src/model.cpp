@@ -47,6 +47,23 @@ struct CheckCommand {
     bool operator()(const MoveOrder& cmd) const {
         return valid_owner(cmd.key, cmd.user) && cmd.new_price.value() > 0;
     }
+
+    bool operator()(const AddUser& cmd) const {
+        return cmd.user.value() > 0;
+    }
+
+    bool operator()(const AdjustBalance& cmd) const {
+        return cmd.user.value() > 0 && cmd.amount.currency.value() > 0 &&
+               cmd.funding_id > 0 && cmd.amount.units != 0;
+    }
+
+    bool operator()(const SuspendUser& cmd) const {
+        return cmd.user.value() > 0;
+    }
+
+    bool operator()(const ResumeUser& cmd) const {
+        return cmd.user.value() > 0;
+    }
 };
 
 const char* status_name(Status status) {
@@ -67,6 +84,20 @@ const char* status_name(Status status) {
             return "price_over_reserve";
         case Status::symbol_exists:
             return "symbol_exists";
+        case Status::unknown_user:
+            return "unknown_user";
+        case Status::user_suspended:
+            return "user_suspended";
+        case Status::user_exists:
+            return "user_exists";
+        case Status::account_not_empty:
+            return "account_not_empty";
+        case Status::duplicate_funding:
+            return "duplicate_funding";
+        case Status::stale_funding:
+            return "stale_funding";
+        case Status::settlement_required:
+            return "settlement_required";
     }
     return "unknown_status";
 }
