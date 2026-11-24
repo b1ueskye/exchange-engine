@@ -31,6 +31,7 @@ public:
 
 private:
     friend class Engine;
+    friend class SnapshotStore;
 
     bool consume(OrderKey key, UserId user, Money amount);
     bool credit(UserId user, Money amount);

@@ -6,7 +6,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <filesystem>
 #include <iosfwd>
+#include <memory>
 #include <span>
 #include <stdexcept>
 #include <vector>
@@ -96,22 +98,31 @@ Bytes read_binary(std::istream& stream);
 void write_binary(std::ostream& stream, std::span<const std::byte> bytes);
 std::vector<Result> replay_log(Engine& engine, const LogScan& log);
 
+class SnapshotStore {
+public:
+    static Bytes encode(const Engine& engine);
+    static std::unique_ptr<Engine> decode(std::span<const std::byte> bytes);
+    static void publish(const std::filesystem::path& destination,
+                        const Engine& engine);
+};
+
 class JournaledEngine {
 public:
     using Append = std::function<void(std::span<const std::byte>)>;
 
     explicit JournaledEngine(Append append, BookKind kind = BookKind::list,
                              std::size_t capacity = 4096);
+    JournaledEngine(Append append, std::unique_ptr<Engine> recovered);
     Result execute(const Command& command);
     bool failed() const {
         return failed_;
     }
     const Engine& state() const {
-        return engine_;
+        return *engine_;
     }
 
 private:
-    Engine engine_;
+    std::unique_ptr<Engine> engine_;
     Append append_;
     bool failed_{};
 };

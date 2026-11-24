@@ -531,8 +531,9 @@ CommandResult OrderBook::move(const MoveOrder& command, Seq seq) {
 }
 
 std::unique_ptr<OrderBook> OrderBook::from_resting(
-    SymbolId symbol, const std::vector<RestingOrder>& orders) {
-    auto staged = std::make_unique<OrderBook>(symbol);
+    SymbolId symbol, const std::vector<RestingOrder>& orders,
+    BookKind kind, std::size_t capacity) {
+    auto staged = std::make_unique<OrderBook>(symbol, kind, capacity);
     for (const auto& order : orders) {
         if (staged->add_resting(order) != Status::processed) {
             throw std::invalid_argument{"invalid resting state"};

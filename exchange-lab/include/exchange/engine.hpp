@@ -11,6 +11,7 @@ namespace exchange {
 class SymbolCatalog {
 private:
     friend class Engine;
+    friend class SnapshotStore;
     struct Market {
         SymbolSpec spec;
         std::unique_ptr<Book> book;
@@ -36,6 +37,7 @@ public:
     }
 
 private:
+    friend class SnapshotStore;
     CommandResult dispatch(const RegisterSymbols& command, Seq seq);
     CommandResult dispatch(const AddUsers& command, Seq seq);
 

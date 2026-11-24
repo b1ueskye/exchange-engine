@@ -333,13 +333,14 @@ std::vector<Result> replay_log(Engine& engine, const LogScan& log) {
 
 JournaledEngine::JournaledEngine(Append append, BookKind kind,
                                  std::size_t capacity)
-    : engine_(kind, capacity), append_(std::move(append)) {}
+    : engine_(std::make_unique<Engine>(kind, capacity)),
+      append_(std::move(append)) {}
 
 Result JournaledEngine::execute(const Command& command) {
     if (failed_) {
         throw std::runtime_error{"journaled engine requires recovery"};
     }
-    const auto next = engine_.next_sequence();
+    const auto next = engine_->next_sequence();
     if (is_mutating(command)) {
         const auto bytes = encode_record(next, command);
         try {
@@ -350,7 +351,7 @@ Result JournaledEngine::execute(const Command& command) {
         }
     }
     try {
-        return engine_.execute_at(command, next);
+        return engine_->execute_at(command, next);
     } catch (...) {
         failed_ = true;
         throw;

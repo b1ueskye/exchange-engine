@@ -74,7 +74,8 @@ public:
     CommandResult move(const MoveOrder& command, Seq seq) override;
 
     static std::unique_ptr<OrderBook> from_resting(
-        SymbolId symbol, const std::vector<RestingOrder>& orders);
+        SymbolId symbol, const std::vector<RestingOrder>& orders,
+        BookKind kind = BookKind::list, std::size_t capacity = 4096);
 
 private:
     friend struct OrderBookTestAccess;

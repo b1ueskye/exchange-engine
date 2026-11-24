@@ -10,6 +10,7 @@ add_library(exchange_lab STATIC
     src/engine.cpp
     src/ledger.cpp
     src/persistence.cpp
+    src/snapshot.cpp
 )
 target_compile_features(exchange_lab PUBLIC cxx_std_20)
 target_include_directories(exchange_lab PUBLIC include)
@@ -130,3 +131,7 @@ set_tests_properties(async_engine PROPERTIES TIMEOUT 20)
 add_executable(journal_tests tests/journal_test.cpp)
 target_link_libraries(journal_tests PRIVATE exchange_lab)
 add_test(NAME journal COMMAND journal_tests)
+
+add_executable(snapshot_tests tests/snapshot_test.cpp)
+target_link_libraries(snapshot_tests PRIVATE exchange_lab)
+add_test(NAME snapshot COMMAND snapshot_tests)
