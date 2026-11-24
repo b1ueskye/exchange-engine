@@ -97,3 +97,7 @@ target_link_libraries(spot_demo PRIVATE exchange_lab)
 add_executable(engine_bench bench/engine_bench.cpp)
 target_link_libraries(engine_bench PRIVATE exchange_lab)
 add_test(NAME engine_bench_smoke COMMAND engine_bench mix)
+
+add_executable(layout_probe bench/layout_probe.cpp)
+target_link_libraries(layout_probe PRIVATE exchange_lab)
+add_test(NAME layout_probe_smoke COMMAND layout_probe)
