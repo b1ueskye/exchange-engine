@@ -115,3 +115,8 @@ add_executable(bounded_queue_tests tests/bounded_queue_test.cpp)
 target_link_libraries(bounded_queue_tests PRIVATE exchange_lab Threads::Threads)
 add_test(NAME bounded_queue COMMAND bounded_queue_tests)
 set_tests_properties(bounded_queue PROPERTIES TIMEOUT 15)
+
+add_executable(spsc_tests tests/spsc_test.cpp)
+target_link_libraries(spsc_tests PRIVATE exchange_lab Threads::Threads)
+add_test(NAME spsc COMMAND spsc_tests)
+set_tests_properties(spsc PROPERTIES TIMEOUT 15)
