@@ -9,6 +9,7 @@ add_library(exchange_lab STATIC
     src/order_book.cpp
     src/engine.cpp
     src/ledger.cpp
+    src/persistence.cpp
 )
 target_compile_features(exchange_lab PUBLIC cxx_std_20)
 target_include_directories(exchange_lab PUBLIC include)
@@ -125,3 +126,7 @@ add_executable(async_engine_tests tests/async_engine_test.cpp)
 target_link_libraries(async_engine_tests PRIVATE exchange_lab Threads::Threads)
 add_test(NAME async_engine COMMAND async_engine_tests)
 set_tests_properties(async_engine PROPERTIES TIMEOUT 20)
+
+add_executable(journal_tests tests/journal_test.cpp)
+target_link_libraries(journal_tests PRIVATE exchange_lab)
+add_test(NAME journal COMMAND journal_tests)

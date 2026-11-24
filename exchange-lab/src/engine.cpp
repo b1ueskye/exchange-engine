@@ -105,11 +105,22 @@ CommandResult Engine::dispatch(const T& command, Seq seq) {
     return result;
 }
 
-Result Engine::execute(const Command& command) {
+Seq Engine::next_sequence() const {
     if (last_seq_ == std::numeric_limits<std::uint64_t>::max()) {
         throw std::overflow_error{"command sequence exhausted"};
     }
-    const Seq seq{++last_seq_};
+    return Seq{last_seq_ + 1};
+}
+
+Result Engine::execute(const Command& command) {
+    return execute_at(command, next_sequence());
+}
+
+Result Engine::execute_at(const Command& command, Seq seq) {
+    if (seq.value() <= last_seq_) {
+        throw std::invalid_argument{"sequence must advance"};
+    }
+    last_seq_ = seq.value();
     return std::visit([&](const auto& input) { return answer(input, seq); },
                       command);
 }

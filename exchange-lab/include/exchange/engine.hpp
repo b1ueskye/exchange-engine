@@ -25,6 +25,11 @@ public:
     explicit Engine(BookKind kind = BookKind::list, std::size_t capacity = 4096)
         : book_kind_(kind), pool_capacity_(capacity) {}
     Result execute(const Command& command);
+    Seq last_sequence() const {
+        return Seq{last_seq_};
+    }
+    Seq next_sequence() const;
+    Result execute_at(const Command& command, Seq seq);
     std::optional<std::vector<RestingOrder>> book_orders(SymbolId symbol) const;
     const Ledger& ledger() const {
         return ledger_;
