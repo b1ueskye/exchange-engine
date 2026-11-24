@@ -105,3 +105,7 @@ add_test(NAME layout_probe_smoke COMMAND layout_probe)
 add_executable(order_node_pool_tests tests/order_node_pool_test.cpp)
 target_link_libraries(order_node_pool_tests PRIVATE exchange_lab)
 add_test(NAME order_node_pool COMMAND order_node_pool_tests)
+
+add_executable(pooled_book_tests tests/pooled_book_test.cpp)
+target_link_libraries(pooled_book_tests PRIVATE exchange_lab)
+add_test(NAME pooled_book COMMAND pooled_book_tests)

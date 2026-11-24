@@ -77,15 +77,22 @@ struct ResumeUser {
     UserId user;
 };
 
-struct RegisterSymbols { std::vector<SymbolSpec> specs; };
-struct AddUsers { std::vector<UserId> users; };
-struct QueryUser { UserId user; };
+struct RegisterSymbols {
+    std::vector<SymbolSpec> specs;
+};
+struct AddUsers {
+    std::vector<UserId> users;
+};
+struct QueryUser {
+    UserId user;
+};
 struct QueryTotals {};
 struct QueryFingerprint {};
 
-using Command = std::variant<PlaceOrder, CancelOrder, ReduceOrder, MoveOrder, RegisterSymbol,
-                             AddUser, AdjustBalance, SuspendUser, ResumeUser,
-                             RegisterSymbols, AddUsers, QueryUser, QueryTotals, QueryFingerprint>;
+using Command = std::variant<PlaceOrder, CancelOrder, ReduceOrder, MoveOrder,
+                             RegisterSymbol, AddUser, AdjustBalance,
+                             SuspendUser, ResumeUser, RegisterSymbols, AddUsers,
+                             QueryUser, QueryTotals, QueryFingerprint>;
 struct RestingOrder {
     OrderKey key;
     UserId user;
@@ -114,6 +121,7 @@ enum class Status {
     duplicate_funding,
     stale_funding,
     settlement_failed,
+    capacity_exhausted,
 };
 
 enum class RejectReason {
@@ -165,7 +173,7 @@ struct CommandResult {
 struct FrozenOrder {
     OrderKey key;
     Money amount;
-    bool operator==(const FrozenOrder&) const = default;
+    bool operator==(const FrozenOrder &) const = default;
 };
 
 struct UserReport {
@@ -194,7 +202,8 @@ struct StateFingerprint {
     std::uint64_t value;
 };
 
-using Report = std::variant<std::monostate, UserReport, TotalsReport, StateFingerprint>;
+using Report =
+    std::variant<std::monostate, UserReport, TotalsReport, StateFingerprint>;
 
 struct Result {
     Seq seq;

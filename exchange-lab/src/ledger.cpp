@@ -187,8 +187,8 @@ Money Ledger::fees(CurrencyId currency) const {
 bool Ledger::consume(OrderKey key, UserId user, Money amount) {
     const auto it = holds_.find({key.symbol, key.order});
     if (it == holds_.end() || it->second.user != user ||
-        it->second.money.currency != amount.currency ||
-        amount.units < 0 || amount.units > it->second.money.units) {
+        it->second.money.currency != amount.currency || amount.units < 0 ||
+        amount.units > it->second.money.units) {
         return false;
     }
     it->second.money.units -= amount.units;
@@ -201,7 +201,8 @@ bool Ledger::credit(UserId user, Money amount) {
         return false;
     }
     auto& balances = it->second.balances;
-    const auto next = checked_add(value_or_zero(balances, amount.currency), amount.units);
+    const auto next =
+        checked_add(value_or_zero(balances, amount.currency), amount.units);
     if (!next) {
         return false;
     }
@@ -215,12 +216,15 @@ bool Ledger::apply_trade(const Trade& trade, const SymbolSpec& spec) {
     const auto sell_key = buy_takes ? trade.maker : trade.taker;
     const auto buyer = buy_takes ? trade.taker_user : trade.maker_user;
     const auto seller = buy_takes ? trade.maker_user : trade.taker_user;
-    const auto buy_fee_rate = buy_takes ? spec.taker_fee_per_lot : spec.maker_fee_per_lot;
-    const auto sell_fee_rate = buy_takes ? spec.maker_fee_per_lot : spec.taker_fee_per_lot;
+    const auto buy_fee_rate =
+        buy_takes ? spec.taker_fee_per_lot : spec.maker_fee_per_lot;
+    const auto sell_fee_rate =
+        buy_takes ? spec.maker_fee_per_lot : spec.taker_fee_per_lot;
     const auto base = base_amount(trade.quantity, spec);
     const auto quote = quote_notional(trade.quantity, trade.price, spec);
     const auto buy_fee = checked_multiply(trade.quantity.value(), buy_fee_rate);
-    const auto sell_fee = checked_multiply(trade.quantity.value(), sell_fee_rate);
+    const auto sell_fee =
+        checked_multiply(trade.quantity.value(), sell_fee_rate);
     if (!base || !quote || !buy_fee || !sell_fee || quote->units < *sell_fee) {
         return false;
     }
@@ -231,7 +235,8 @@ bool Ledger::apply_trade(const Trade& trade, const SymbolSpec& spec) {
     if (!buy_paid || !sell_received || !fees_paid) {
         return false;
     }
-    const auto fees_after = checked_add(value_or_zero(fees_, spec.quote), *fees_paid);
+    const auto fees_after =
+        checked_add(value_or_zero(fees_, spec.quote), *fees_paid);
     if (!fees_after || !consume(buy_key, buyer, {spec.quote, *buy_paid}) ||
         !consume(sell_key, seller, *base) || !credit(buyer, *base) ||
         !credit(seller, {spec.quote, *sell_received})) {
@@ -241,7 +246,8 @@ bool Ledger::apply_trade(const Trade& trade, const SymbolSpec& spec) {
     return true;
 }
 
-bool Ledger::align_hold(OrderKey key, const OrderBook& book, const SymbolSpec& spec) {
+bool Ledger::align_hold(OrderKey key, const Book& book,
+                        const SymbolSpec& spec) {
     const auto hold = holds_.find({key.symbol, key.order});
     if (hold == holds_.end()) {
         return false;
@@ -254,9 +260,10 @@ bool Ledger::align_hold(OrderKey key, const OrderBook& book, const SymbolSpec& s
             (order->side == Side::bid && !order->reserve_bid_price)) {
             return false;
         }
-        const auto required = order->side == Side::bid
-            ? bid_hold(order->remaining, *order->reserve_bid_price, spec)
-            : base_amount(order->remaining, spec);
+        const auto required =
+            order->side == Side::bid
+                ? bid_hold(order->remaining, *order->reserve_bid_price, spec)
+                : base_amount(order->remaining, spec);
         if (!required || required->currency != hold->second.money.currency ||
             required->units > hold->second.money.units) {
             return false;
@@ -265,7 +272,8 @@ bool Ledger::align_hold(OrderKey key, const OrderBook& book, const SymbolSpec& s
     }
 
     const auto refund = hold->second.money.units - keep;
-    if (refund > 0 && !credit(hold->second.user, {hold->second.money.currency, refund})) {
+    if (refund > 0 &&
+        !credit(hold->second.user, {hold->second.money.currency, refund})) {
         return false;
     }
     if (keep == 0) {
@@ -277,7 +285,7 @@ bool Ledger::align_hold(OrderKey key, const OrderBook& book, const SymbolSpec& s
 }
 
 bool Ledger::apply_spot(OrderKey primary, const std::vector<Event>& events,
-                        const OrderBook& book, const SymbolSpec& spec) {
+                        const Book& book, const SymbolSpec& spec) {
     std::set<HoldKey> touched{{primary.symbol, primary.order}};
     for (const auto& event : events) {
         if (const auto* trade = std::get_if<Trade>(&event)) {
@@ -309,7 +317,8 @@ std::optional<UserReport> Ledger::user_report(UserId user) const {
     if (it == accounts_.end()) {
         return std::nullopt;
     }
-    UserReport report{user, it->second.suspended, it->second.last_funding, {}, {}, {}};
+    UserReport report{
+        user, it->second.suspended, it->second.last_funding, {}, {}, {}};
     for (const auto& [currency, units] : it->second.balances) {
         report.available.push_back({currency, units});
     }
@@ -324,7 +333,8 @@ std::optional<UserReport> Ledger::user_report(UserId user) const {
 TotalsReport Ledger::totals() const {
     std::map<CurrencyId, CurrencyTotals> rows;
     const auto row = [&rows](CurrencyId currency) -> CurrencyTotals& {
-        return rows.try_emplace(currency, CurrencyTotals{currency}).first->second;
+        return rows.try_emplace(currency, CurrencyTotals{currency})
+            .first->second;
     };
     const auto accumulate = [](std::int64_t& field, std::int64_t amount) {
         const auto next = checked_add(field, amount);

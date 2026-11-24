@@ -30,10 +30,11 @@ public:
         const PoolQueue* owner{};
     };
 
-    explicit OrderNodePool(
-        std::size_t capacity,
-        std::uint64_t generation_limit = std::numeric_limits<std::uint64_t>::max())
-        : slots_(capacity), free_(capacity == 0 ? NodeHandle::none : 0),
+    explicit OrderNodePool(std::size_t capacity,
+                           std::uint64_t generation_limit =
+                               std::numeric_limits<std::uint64_t>::max())
+        : slots_(capacity),
+          free_(capacity == 0 ? NodeHandle::none : 0),
           generation_limit_(generation_limit) {
         if (generation_limit == 0) {
             throw std::invalid_argument{"generation limit must be positive"};
@@ -46,7 +47,9 @@ public:
     OrderNodePool(const OrderNodePool&) = delete;
     OrderNodePool& operator=(const OrderNodePool&) = delete;
 
-    bool has_room() const { return free_ != NodeHandle::none; }
+    bool has_room() const {
+        return free_ != NodeHandle::none;
+    }
 
     std::optional<NodeHandle> acquire(const RestingOrder& order) {
         if (!has_room()) {
@@ -64,7 +67,8 @@ public:
             return nullptr;
         }
         auto& slot = slots_[handle.slot];
-        return slot.generation == handle.generation && slot.node ? &*slot.node : nullptr;
+        return slot.generation == handle.generation && slot.node ? &*slot.node
+                                                                 : nullptr;
     }
 
     bool release(NodeHandle handle) {
@@ -106,10 +110,18 @@ public:
         }
     }
 
-    bool empty() const { return size_ == 0; }
-    std::size_t size() const { return size_; }
-    NodeHandle head() const { return head_; }
-    NodeHandle tail() const { return tail_; }
+    bool empty() const {
+        return size_ == 0;
+    }
+    std::size_t size() const {
+        return size_;
+    }
+    NodeHandle head() const {
+        return head_;
+    }
+    NodeHandle tail() const {
+        return tail_;
+    }
 
     OrderNodePool::Node* get(NodeHandle handle) const {
         auto* node = pool_.get(handle);
@@ -163,6 +175,6 @@ private:
     std::size_t size_{};
 };
 
-}
+}  // namespace exchange
 
 #endif

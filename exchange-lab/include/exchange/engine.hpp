@@ -13,18 +13,22 @@ private:
     friend class Engine;
     struct Market {
         SymbolSpec spec;
-        std::unique_ptr<OrderBook> book;
+        std::unique_ptr<Book> book;
     };
 
-    Status add(const SymbolSpec& spec);
+    Status add(const SymbolSpec& spec, BookKind kind, std::size_t capacity);
     std::map<SymbolId, Market> markets_;
 };
 
 class Engine {
 public:
+    explicit Engine(BookKind kind = BookKind::list, std::size_t capacity = 4096)
+        : book_kind_(kind), pool_capacity_(capacity) {}
     Result execute(const Command& command);
     std::optional<std::vector<RestingOrder>> book_orders(SymbolId symbol) const;
-    const Ledger& ledger() const { return ledger_; }
+    const Ledger& ledger() const {
+        return ledger_;
+    }
 
 private:
     CommandResult dispatch(const RegisterSymbols& command, Seq seq);
@@ -34,7 +38,7 @@ private:
     Result answer(const QueryTotals& command, Seq seq);
     Result answer(const QueryFingerprint& command, Seq seq);
 
-    template<class T>
+    template <class T>
     Result answer(const T& command, Seq seq) {
         return {seq, dispatch(command, seq)};
     }
@@ -51,6 +55,8 @@ private:
     SymbolCatalog catalog_;
     Ledger ledger_;
     std::uint64_t last_seq_{};
+    BookKind book_kind_;
+    std::size_t pool_capacity_;
 };
 
 }  // namespace exchange

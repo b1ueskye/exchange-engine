@@ -11,11 +11,21 @@ bool valid_owner(const OrderKey& key, UserId user) {
 }
 
 struct CheckCommand {
-    bool operator()(const RegisterSymbols& cmd) const { return !cmd.specs.empty(); }
-    bool operator()(const AddUsers& cmd) const { return !cmd.users.empty(); }
-    bool operator()(const QueryUser& cmd) const { return cmd.user.value() > 0; }
-    bool operator()(const QueryTotals&) const { return true; }
-    bool operator()(const QueryFingerprint&) const { return true; }
+    bool operator()(const RegisterSymbols& cmd) const {
+        return !cmd.specs.empty();
+    }
+    bool operator()(const AddUsers& cmd) const {
+        return !cmd.users.empty();
+    }
+    bool operator()(const QueryUser& cmd) const {
+        return cmd.user.value() > 0;
+    }
+    bool operator()(const QueryTotals&) const {
+        return true;
+    }
+    bool operator()(const QueryFingerprint&) const {
+        return true;
+    }
     bool operator()(const RegisterSymbol& cmd) const {
         return valid_symbol(cmd.spec);
     }
@@ -101,6 +111,8 @@ const char* status_name(Status status) {
             return "duplicate_funding";
         case Status::stale_funding:
             return "stale_funding";
+        case Status::capacity_exhausted:
+            return "capacity_exhausted";
         case Status::settlement_failed:
             return "settlement_failed";
     }

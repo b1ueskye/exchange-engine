@@ -2,6 +2,7 @@
 #define EXCHANGE_ORDER_BOOK_HPP
 
 #include "exchange/model.hpp"
+#include "exchange/order_queue.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -11,7 +12,7 @@
 #include <optional>
 #include <unordered_map>
 #include <vector>
-#include<memory>
+#include <memory>
 
 namespace exchange {
 
@@ -30,9 +31,30 @@ struct L2Snapshot {
 
 struct OrderBookTestAccess;
 
-class OrderBook {
+enum class BookKind { list, pooled };
+
+class Book {
 public:
-    explicit OrderBook(SymbolId symbol);
+    virtual ~Book() = default;
+    virtual std::unique_ptr<Book> clone() const = 0;
+    virtual CommandResult place(const PlaceOrder&, Seq) = 0;
+    virtual CommandResult cancel(const CancelOrder&) = 0;
+    virtual CommandResult reduce(const ReduceOrder&) = 0;
+    virtual CommandResult move(const MoveOrder&, Seq) = 0;
+    virtual std::optional<RestingOrder> find_order(OrderId) const = 0;
+    virtual std::vector<RestingOrder> resting_orders() const = 0;
+    virtual L2Snapshot snapshot(std::size_t depth) const = 0;
+    virtual bool validate() const = 0;
+};
+
+std::unique_ptr<Book> make_book(BookKind kind, SymbolId symbol,
+                                std::size_t capacity);
+
+class OrderBook final : public Book {
+public:
+    explicit OrderBook(SymbolId symbol, BookKind kind = BookKind::list,
+                       std::size_t capacity = 4096);
+    std::unique_ptr<Book> clone() const override;
     OrderBook(const OrderBook&) = delete;
     OrderBook& operator=(const OrderBook&) = delete;
     OrderBook(OrderBook&&) = delete;
@@ -40,32 +62,33 @@ public:
 
     std::optional<Price> best_bid() const;
     std::optional<Price> best_ask() const;
-    std::optional<RestingOrder> find_order(OrderId id) const;
-    bool validate() const;
+    std::optional<RestingOrder> find_order(OrderId id) const override;
+    bool validate() const override;
 
-    L2Snapshot snapshot(std::size_t depth) const;
-    std::vector<RestingOrder> resting_orders() const;
+    L2Snapshot snapshot(std::size_t depth) const override;
+    std::vector<RestingOrder> resting_orders() const override;
 
-    CommandResult place(const PlaceOrder& order, Seq seq);
-    CommandResult cancel(const CancelOrder& command);
-    CommandResult reduce(const ReduceOrder& command);
-    CommandResult move(const MoveOrder& command, Seq seq);
+    CommandResult place(const PlaceOrder& order, Seq seq) override;
+    CommandResult cancel(const CancelOrder& command) override;
+    CommandResult reduce(const ReduceOrder& command) override;
+    CommandResult move(const MoveOrder& command, Seq seq) override;
 
-        static std::unique_ptr<OrderBook> from_resting(
-            SymbolId symbol, const std::vector<RestingOrder>& orders);
+    static std::unique_ptr<OrderBook> from_resting(
+        SymbolId symbol, const std::vector<RestingOrder>& orders);
 
 private:
     friend struct OrderBookTestAccess;
 
     struct Level {
-        std::list<RestingOrder> fifo;
+        explicit Level(OrderNodePool* pool) : fifo(pool) {}
+        OrderQueue fifo;
         std::int64_t total_remaining{};
     };
 
     struct OrderLocation {
         Side side;
         Price price;
-        std::list<RestingOrder>::iterator node;
+        OrderQueue::Handle node;
     };
 
     struct OrderIdHash {
@@ -124,6 +147,9 @@ private:
                            const RestingOrder& order);
 
     SymbolId symbol_;
+    BookKind kind_;
+    std::size_t capacity_;
+    std::unique_ptr<OrderNodePool> pool_;
     AskLevels asks_;
     BidLevels bids_;
     Index index_;

@@ -12,19 +12,27 @@ struct OrderBookTestAccess {
         return book.add_resting(order);
     }
 
-    static std::vector<RestingOrder> queue(const OrderBook& book, Side side, Price price) {
-        const auto read = [price](const auto& levels) -> std::vector<RestingOrder> {
+    static std::vector<RestingOrder> queue(const OrderBook& book, Side side,
+                                           Price price) {
+        const auto read =
+            [price](const auto& levels) -> std::vector<RestingOrder> {
             const auto it = levels.find(price);
             if (it == levels.end()) {
                 return {};
             }
-            return {it->second.fifo.begin(), it->second.fifo.end()};
+            std::vector<RestingOrder> result;
+            for (const auto& order : it->second.fifo) {
+                result.push_back(order);
+            }
+            return result;
         };
         return side == Side::ask ? read(book.asks_) : read(book.bids_);
     }
 
-    static std::optional<std::int64_t> total(const OrderBook& book, Side side, Price price) {
-        const auto read = [price](const auto& levels) -> std::optional<std::int64_t> {
+    static std::optional<std::int64_t> total(const OrderBook& book, Side side,
+                                             Price price) {
+        const auto read =
+            [price](const auto& levels) -> std::optional<std::int64_t> {
             const auto it = levels.find(price);
             if (it == levels.end()) {
                 return std::nullopt;
@@ -34,7 +42,8 @@ struct OrderBookTestAccess {
         return side == Side::ask ? read(book.asks_) : read(book.bids_);
     }
 
-    static std::optional<RestingOrder> remove(OrderBook& book, OrderId id, UserId owner) {
+    static std::optional<RestingOrder> remove(OrderBook& book, OrderId id,
+                                              UserId owner) {
         return book.remove_resting(id, owner);
     }
 
@@ -52,6 +61,6 @@ struct OrderBookTestAccess {
     }
 };
 
-}
+}  // namespace exchange
 
 #endif

@@ -8,7 +8,7 @@
 
 namespace exchange {
 
-class OrderBook;
+class Book;
 
 std::optional<Money> required_hold(const PlaceOrder& order,
                                    const SymbolSpec& spec);
@@ -35,10 +35,9 @@ private:
     bool consume(OrderKey key, UserId user, Money amount);
     bool credit(UserId user, Money amount);
     bool apply_trade(const Trade& trade, const SymbolSpec& spec);
-    bool align_hold(OrderKey key, const OrderBook& book,
-                    const SymbolSpec& spec);
+    bool align_hold(OrderKey key, const Book& book, const SymbolSpec& spec);
     bool apply_spot(OrderKey primary, const std::vector<Event>& events,
-                    const OrderBook& book, const SymbolSpec& spec);
+                    const Book& book, const SymbolSpec& spec);
 
     struct Account {
         std::map<CurrencyId, std::int64_t> balances;

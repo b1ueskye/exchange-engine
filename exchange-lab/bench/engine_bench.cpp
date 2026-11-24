@@ -16,18 +16,27 @@ using namespace exchange;
 using Clock = std::chrono::steady_clock;
 
 constexpr std::size_t units = 120;
+constexpr std::size_t pool_capacity = 64;
 constexpr std::uint32_t seed = 2026;
 const SymbolSpec spec{SymbolId{1}, CurrencyId{10}, CurrencyId{20}, 1, 1, 1, 2};
 const UserId buyer{1};
 const UserId seller{2};
 
-OrderKey key(std::uint64_t id) { return {spec.symbol, OrderId{id}}; }
+OrderKey key(std::uint64_t id) {
+    return {spec.symbol, OrderId{id}};
+}
 
-PlaceOrder order(std::uint64_t id, Side side, std::int64_t price, std::int64_t qty) {
+PlaceOrder order(std::uint64_t id, Side side, std::int64_t price,
+                 std::int64_t qty) {
     const auto user = side == Side::bid ? buyer : seller;
-    const auto reserve = side == Side::bid ? std::optional<Price>{Price{120}} : std::nullopt;
-    return {key(id), user, side, Quantity{qty},
-            LimitPrice{Price{price}, LimitPolicy::gtc, reserve}, 0};
+    const auto reserve =
+        side == Side::bid ? std::optional<Price>{Price{120}} : std::nullopt;
+    return {key(id),
+            user,
+            side,
+            Quantity{qty},
+            LimitPrice{Price{price}, LimitPolicy::gtc, reserve},
+            0};
 }
 
 void submit(Engine& engine, const Command& command) {
@@ -36,8 +45,8 @@ void submit(Engine& engine, const Command& command) {
     }
 }
 
-std::unique_ptr<Engine> make_engine() {
-    auto engine = std::make_unique<Engine>();
+std::unique_ptr<Engine> make_engine(BookKind kind) {
+    auto engine = std::make_unique<Engine>(kind, pool_capacity);
     submit(*engine, RegisterSymbol{spec});
     submit(*engine, AddUsers{{buyer, seller}});
     submit(*engine, AdjustBalance{buyer, {spec.quote, 100'000'000}, 1});
@@ -52,12 +61,12 @@ struct Prepared {
     std::size_t expected_trades{};
 };
 
-Prepared prepare(std::string_view mode) {
+Prepared prepare(std::string_view mode, BookKind kind) {
     Prepared run;
     run.engines.reserve(mode == "sweep" ? units : 1);
     run.commands.reserve(mode == "mix" ? 4 * units : units);
     if (mode != "sweep") {
-        run.engines.push_back(make_engine());
+        run.engines.push_back(make_engine(kind));
     }
     std::mt19937 rng{seed};
     for (std::size_t i = 0; i < units; ++i) {
@@ -69,7 +78,7 @@ Prepared prepare(std::string_view mode) {
             run.commands.emplace_back(CancelOrder{key(id), buyer});
             ++run.expected_events;
         } else if (mode == "sweep") {
-            auto engine = make_engine();
+            auto engine = make_engine(kind);
             submit(*engine, order(1, Side::ask, 100, 1));
             submit(*engine, order(2, Side::ask, 101, 1));
             run.engines.push_back(std::move(engine));
@@ -80,7 +89,8 @@ Prepared prepare(std::string_view mode) {
             const auto price = static_cast<std::int64_t>(90 + rng() % 5);
             run.commands.emplace_back(order(id, Side::bid, price, 3));
             run.commands.emplace_back(ReduceOrder{key(id), buyer, Quantity{1}});
-            run.commands.emplace_back(MoveOrder{key(id), buyer, Price{price + 1}});
+            run.commands.emplace_back(
+                MoveOrder{key(id), buyer, Price{price + 1}});
             run.commands.emplace_back(CancelOrder{key(id), buyer});
             run.expected_events += 2;
         }
@@ -104,7 +114,8 @@ void collect(Counts& counts, const Result& result) {
 
 void verify(const Prepared& prepared, const Counts& counts) {
     if (counts.processed != prepared.commands.size() ||
-        counts.events != prepared.expected_events || counts.trades != prepared.expected_trades) {
+        counts.events != prepared.expected_events ||
+        counts.trades != prepared.expected_trades) {
         throw std::runtime_error{"benchmark workload changed"};
     }
 }
@@ -113,9 +124,12 @@ Engine& engine_at(Prepared& prepared, std::size_t index) {
     return *prepared.engines[prepared.engines.size() == 1 ? 0 : index];
 }
 
-void round(std::string_view mode, int trial, bool print) {
-    auto throughput = prepare(mode);
-    auto latency = prepare(mode);
+void round(std::string_view mode, int trial, bool print, BookKind kind) {
+    const auto setup_start = Clock::now();
+    auto throughput = prepare(mode, kind);
+    auto latency = prepare(mode, kind);
+    const double setup_seconds =
+        std::chrono::duration<double>(Clock::now() - setup_start).count();
     std::vector<std::int64_t> samples;
     samples.reserve(latency.commands.size());
 
@@ -124,7 +138,8 @@ void round(std::string_view mode, int trial, bool print) {
     for (std::size_t i = 0; i < throughput.commands.size(); ++i) {
         collect(fast, engine_at(throughput, i).execute(throughput.commands[i]));
     }
-    const double elapsed = std::chrono::duration<double>(Clock::now() - begin).count();
+    const double elapsed =
+        std::chrono::duration<double>(Clock::now() - begin).count();
     verify(throughput, fast);
 
     Counts timed;
@@ -134,7 +149,9 @@ void round(std::string_view mode, int trial, bool print) {
         const auto start = Clock::now();
         const auto result = engine.execute(command);
         const auto elapsed_ns =
-            std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - start).count();
+            std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                                 start)
+                .count();
         samples.push_back(elapsed_ns);
         collect(timed, result);
     }
@@ -144,25 +161,34 @@ void round(std::string_view mode, int trial, bool print) {
         const auto rank = [&samples](std::size_t percentile) {
             return samples[(samples.size() * percentile + 99) / 100 - 1];
         };
-        std::cout << "mode=" << mode << " round=" << trial << " seed=" << seed
+        std::cout << "book=" << (kind == BookKind::list ? "list" : "pooled")
+                  << " pool_capacity=" << pool_capacity << " setup_seconds=" << setup_seconds
+                  << " mode=" << mode << " round=" << trial << " seed=" << seed
                   << " ops=" << fast.processed << " events=" << fast.events
                   << " trades=" << fast.trades << " seconds=" << elapsed
-                  << " ops_per_s=" << static_cast<double>(fast.processed) / elapsed
+                  << " ops_per_s="
+                  << static_cast<double>(fast.processed) / elapsed
                   << " p50_ns=" << rank(50) << " p99_ns=" << rank(99)
                   << " max_ns=" << samples.back() << '\n';
     }
 }
 
-}
+}  // namespace
 
 int main(int argc, char** argv) {
-    const std::string_view mode = argc == 2 ? argv[1] : "mix";
-    if (argc > 2 || (mode != "place" && mode != "cancel" && mode != "sweep" && mode != "mix")) {
-        std::cerr << "usage: engine_bench [place|cancel|sweep|mix]\n";
+    const std::string_view mode = argc >= 2 ? argv[1] : "mix";
+    const std::string_view layout = argc == 3 ? argv[2] : "list";
+    if (argc > 3 ||
+        (mode != "place" && mode != "cancel" && mode != "sweep" &&
+         mode != "mix") ||
+        (layout != "list" && layout != "pooled")) {
+        std::cerr
+            << "usage: engine_bench [place|cancel|sweep|mix] [list|pooled]\n";
         return 2;
     }
-    round(mode, 0, false);
+    const auto kind = layout == "list" ? BookKind::list : BookKind::pooled;
+    round(mode, 0, false, kind);
     for (int i = 1; i <= 3; ++i) {
-        round(mode, i, true);
+        round(mode, i, true, kind);
     }
 }

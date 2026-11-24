@@ -7,20 +7,21 @@
 
 namespace exchange {
 
-Status SymbolCatalog::add(const SymbolSpec& spec) {
+Status SymbolCatalog::add(const SymbolSpec& spec, BookKind kind,
+                          std::size_t capacity) {
     if (!valid_symbol(spec)) {
         return Status::invalid_input;
     }
     if (markets_.contains(spec.symbol)) {
         return Status::symbol_exists;
     }
-    markets_.try_emplace(
-        spec.symbol, Market{spec, std::make_unique<OrderBook>(spec.symbol)});
+    markets_.try_emplace(spec.symbol,
+                         Market{spec, make_book(kind, spec.symbol, capacity)});
     return Status::processed;
 }
 
 CommandResult Engine::dispatch(const RegisterSymbol& command, Seq) {
-    return {catalog_.add(command.spec), {}};
+    return {catalog_.add(command.spec, book_kind_, pool_capacity_), {}};
 }
 
 CommandResult Engine::dispatch(const AddUser& command, Seq) {
@@ -67,8 +68,7 @@ CommandResult Engine::dispatch(const T& command, Seq seq) {
         }
     }
 
-    auto staged = OrderBook::from_resting(market.spec.symbol,
-                                          market.book->resting_orders());
+    auto staged = market.book->clone();
     auto result = [&] {
         if constexpr (std::is_same_v<T, PlaceOrder>) {
             return staged->place(command, seq);
@@ -110,7 +110,8 @@ Result Engine::execute(const Command& command) {
         throw std::overflow_error{"command sequence exhausted"};
     }
     const Seq seq{++last_seq_};
-    return std::visit([&](const auto& input) { return answer(input, seq); }, command);
+    return std::visit([&](const auto& input) { return answer(input, seq); },
+                      command);
 }
 
 std::optional<std::vector<RestingOrder>> Engine::book_orders(
@@ -128,11 +129,11 @@ CommandResult Engine::dispatch(const RegisterSymbols& command, Seq) {
     }
     SymbolCatalog staged;
     for (const auto& [id, market] : catalog_.markets_) {
-        staged.markets_.try_emplace(id, SymbolCatalog::Market{
-            market.spec, OrderBook::from_resting(id, market.book->resting_orders())});
+        staged.markets_.try_emplace(
+            id, SymbolCatalog::Market{market.spec, market.book->clone()});
     }
     for (const auto& spec : command.specs) {
-        const auto status = staged.add(spec);
+        const auto status = staged.add(spec, book_kind_, pool_capacity_);
         if (status != Status::processed) {
             return {status, {}};
         }
@@ -203,7 +204,8 @@ Result Engine::answer(const QueryFingerprint&, Seq seq) {
             number(order.price.value());
             number(order.remaining.value());
             number(order.reserve_bid_price.has_value());
-            number(order.reserve_bid_price ? order.reserve_bid_price->value() : 0);
+            number(order.reserve_bid_price ? order.reserve_bid_price->value()
+                                           : 0);
             number(order.priority_seq.value());
             number(order.timestamp_ns);
         }

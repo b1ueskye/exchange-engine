@@ -25,10 +25,12 @@ private:
         bytes += size;
         return ptr;
     }
-    void do_deallocate(void* ptr, std::size_t size, std::size_t align) override {
+    void do_deallocate(void* ptr, std::size_t size,
+                       std::size_t align) override {
         std::pmr::new_delete_resource()->deallocate(ptr, size, align);
     }
-    bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override {
+    bool do_is_equal(
+        const std::pmr::memory_resource& other) const noexcept override {
         return this == &other;
     }
 };
@@ -39,11 +41,17 @@ struct Packet {
     std::vector<int> events;
 
     explicit Packet(std::size_t count) : events(count, 7) {}
-    Packet(const Packet& other) : events(other.events) { ++copies; }
-    Packet(Packet&& other) noexcept : events(std::move(other.events)) { ++moves; }
+    Packet(const Packet& other) : events(other.events) {
+        ++copies;
+    }
+    Packet(Packet&& other) noexcept : events(std::move(other.events)) {
+        ++moves;
+    }
 };
 
-Packet make_packet() { return Packet{64}; }
+Packet make_packet() {
+    return Packet{64};
+}
 
 struct Row {
     std::uint64_t id;
@@ -59,7 +67,10 @@ struct Columns {
     std::pmr::vector<std::int64_t> timestamps;
 
     explicit Columns(std::pmr::memory_resource* resource)
-        : ids(resource), prices(resource), quantities(resource), timestamps(resource) {}
+        : ids(resource),
+          prices(resource),
+          quantities(resource),
+          timestamps(resource) {}
 
     void reserve(std::size_t count) {
         ids.reserve(count);
@@ -76,7 +87,7 @@ struct Columns {
     }
 };
 
-template<class Rows>
+template <class Rows>
 std::int64_t sum_rows(const Rows& rows) {
     std::int64_t sum = 0;
     for (const auto& row : rows) {
@@ -85,9 +96,9 @@ std::int64_t sum_rows(const Rows& rows) {
     return sum;
 }
 
-template<class Scan, class Update>
-void measure(const char* name, const CountingResource& resource, Scan scan, Update update,
-             std::int64_t expected) {
+template <class Scan, class Update>
+void measure(const char* name, const CountingResource& resource, Scan scan,
+             Update update, std::int64_t expected) {
     if (scan() != expected) {
         throw std::logic_error{"warmup checksum differs"};
     }
@@ -102,29 +113,33 @@ void measure(const char* name, const CountingResource& resource, Scan scan, Upda
         if (observed != expected + 1 + i) {
             throw std::logic_error{"scan checksum differs"};
         }
-        const double ns = std::chrono::duration<double, std::nano>(stop - start).count();
+        const double ns =
+            std::chrono::duration<double, std::nano>(stop - start).count();
         sum += ns;
         squares += ns * ns;
     }
     const auto mean = sum / repeats;
     const auto variance = std::fmax(0.0, squares / repeats - mean * mean);
-    std::cout << name << " allocations=" << resource.calls << " bytes=" << resource.bytes
-              << " mean_ns=" << mean << " variance_ns2=" << variance
-              << " base_checksum=" << expected << '\n';
+    std::cout << name << " allocations=" << resource.calls
+              << " bytes=" << resource.bytes << " mean_ns=" << mean
+              << " variance_ns2=" << variance << " base_checksum=" << expected
+              << '\n';
 }
 
-}
+}  // namespace
 
 int main() {
     auto original = make_packet();
     auto copy = original;
     auto moved = std::move(original);
-    if (copy.events != moved.events || Packet::copies != 1 || Packet::moves != 1) {
+    if (copy.events != moved.events || Packet::copies != 1 ||
+        Packet::moves != 1) {
         return 1;
     }
     original.events.assign(1, 9);
     std::cout << "copies=" << Packet::copies << " moves=" << Packet::moves
-              << " sizeof_row=" << sizeof(Row) << " alignof_row=" << alignof(Row) << '\n';
+              << " sizeof_row=" << sizeof(Row)
+              << " alignof_row=" << alignof(Row) << '\n';
 
     CountingResource contiguous_memory;
     CountingResource linked_memory;
@@ -144,15 +159,22 @@ int main() {
         columns.add(row);
         expected += row.quantity;
     }
-    measure("aos", contiguous_memory, [&] { return sum_rows(contiguous); },
-            [&](std::int64_t value) { contiguous.front().quantity = value; }, expected);
-    measure("list", linked_memory, [&] { return sum_rows(linked); },
-            [&](std::int64_t value) { linked.front().quantity = value; }, expected);
-    measure("soa", column_memory, [&] {
-        std::int64_t sum = 0;
-        for (const auto quantity : columns.quantities) {
-            sum += quantity;
-        }
-        return sum;
-    }, [&](std::int64_t value) { columns.quantities.front() = value; }, expected);
+    measure(
+        "aos", contiguous_memory, [&] { return sum_rows(contiguous); },
+        [&](std::int64_t value) { contiguous.front().quantity = value; },
+        expected);
+    measure(
+        "list", linked_memory, [&] { return sum_rows(linked); },
+        [&](std::int64_t value) { linked.front().quantity = value; }, expected);
+    measure(
+        "soa", column_memory,
+        [&] {
+            std::int64_t sum = 0;
+            for (const auto quantity : columns.quantities) {
+                sum += quantity;
+            }
+            return sum;
+        },
+        [&](std::int64_t value) { columns.quantities.front() = value; },
+        expected);
 }

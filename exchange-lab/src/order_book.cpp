@@ -1,14 +1,40 @@
 #include "exchange/order_book.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <stdexcept>
 
 namespace exchange {
 
-OrderBook::OrderBook(SymbolId symbol) : symbol_{symbol} {
+OrderBook::OrderBook(SymbolId symbol, BookKind kind, std::size_t capacity)
+    : symbol_{symbol}, kind_{kind}, capacity_{capacity} {
     if (symbol.value() == 0) {
-        throw std::invalid_argument("SymbolId must be non-zero");
+        throw std::invalid_argument{"order book requires a symbol"};
     }
+    if (kind_ == BookKind::pooled) {
+        if (capacity_ == std::numeric_limits<std::size_t>::max()) {
+            throw std::invalid_argument{"pool capacity too large"};
+        }
+        pool_ = std::make_unique<OrderNodePool>(capacity_ + 1);
+    }
+}
+
+std::unique_ptr<Book> OrderBook::clone() const {
+    auto copy = std::make_unique<OrderBook>(symbol_, kind_, capacity_);
+    for (const auto& order : resting_orders()) {
+        if (copy->add_resting(order) != Status::processed) {
+            throw std::logic_error{"could not clone order book"};
+        }
+    }
+    if (!copy->validate()) {
+        throw std::logic_error{"cloned order book is inconsistent"};
+    }
+    return copy;
+}
+
+std::unique_ptr<Book> make_book(BookKind kind, SymbolId symbol,
+                                std::size_t capacity) {
+    return std::make_unique<OrderBook>(symbol, kind, capacity);
 }
 
 std::optional<Price> OrderBook::best_bid() const {
@@ -51,7 +77,10 @@ bool OrderBook::crosses(const RestingOrder& order) const {
 template <class Levels>
 Status OrderBook::append_to(Levels& levels, const RestingOrder& order,
                             BeforeIndexInsert before_index) {
-    auto [it, created] = levels.try_emplace(order.price);
+    if (pool_ && index_.size() >= capacity_) {
+        return Status::capacity_exhausted;
+    }
+    auto [it, created] = levels.try_emplace(order.price, pool_.get());
     auto& level = it->second;
     if (!level.fifo.empty() &&
         level.fifo.back().priority_seq >= order.priority_seq) {
@@ -64,12 +93,17 @@ Status OrderBook::append_to(Levels& levels, const RestingOrder& order,
     }
 
     try {
-        level.fifo.push_back(order);
+        if (!level.fifo.push_back(order)) {
+            if (created) {
+                levels.erase(it);
+            }
+            return Status::capacity_exhausted;
+        }
         try {
             if (before_index) {
                 before_index();
             }
-            const auto node = std::prev(level.fifo.end());
+            const auto node = level.fifo.last();
             const auto inserted = index_.try_emplace(
                 order.key.order, OrderLocation{order.side, order.price, node});
             if (!inserted.second) {
@@ -206,7 +240,9 @@ std::vector<RestingOrder> OrderBook::resting_orders() const {
     result.reserve(index_.size());
     const auto append = [&result](const auto& levels) {
         for (const auto& [price, level] : levels) {
-            result.insert(result.end(), level.fifo.begin(), level.fifo.end());
+            for (const auto& order : level.fifo) {
+                result.push_back(order);
+            }
         }
     };
     append(asks_);
@@ -413,7 +449,7 @@ Status OrderBook::replace_resting(Levels& levels, Index::iterator indexed,
     const auto old_location = indexed->second;
     const auto old_level = levels.find(old_location.price);
     const auto old_quantity = old_location.node->remaining.value();
-    auto [target, created] = levels.try_emplace(order.price);
+    auto [target, created] = levels.try_emplace(order.price, pool_.get());
     auto& level = target->second;
     const bool same_level = target == old_level;
     const auto base = level.total_remaining - (same_level ? old_quantity : 0);
@@ -425,7 +461,12 @@ Status OrderBook::replace_resting(Levels& levels, Index::iterator indexed,
     }
 
     try {
-        level.fifo.push_back(order);
+        if (!level.fifo.push_back(order)) {
+            if (created) {
+                levels.erase(target);
+            }
+            return Status::capacity_exhausted;
+        }
     } catch (...) {
         if (created) {
             levels.erase(target);
@@ -433,8 +474,7 @@ Status OrderBook::replace_resting(Levels& levels, Index::iterator indexed,
         throw;
     }
 
-    indexed->second =
-        OrderLocation{order.side, order.price, std::prev(level.fifo.end())};
+    indexed->second = OrderLocation{order.side, order.price, level.fifo.last()};
     old_level->second.fifo.erase(old_location.node);
     level.total_remaining = *total;
     if (!same_level) {
