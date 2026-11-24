@@ -25,6 +25,9 @@ public:
     std::optional<Money> held(OrderKey key) const;
     Money fees(CurrencyId currency) const;
     void swap(Ledger& other) noexcept;
+    std::optional<UserReport> user_report(UserId user) const;
+    TotalsReport totals() const;
+    void append_canonical(std::string& out) const;
 
 private:
     friend class Engine;

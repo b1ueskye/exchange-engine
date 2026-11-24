@@ -77,9 +77,15 @@ struct ResumeUser {
     UserId user;
 };
 
-using Command = std::variant<PlaceOrder, CancelOrder, ReduceOrder, MoveOrder,
-                             RegisterSymbol, AddUser, AdjustBalance,
-                             SuspendUser, ResumeUser>;
+struct RegisterSymbols { std::vector<SymbolSpec> specs; };
+struct AddUsers { std::vector<UserId> users; };
+struct QueryUser { UserId user; };
+struct QueryTotals {};
+struct QueryFingerprint {};
+
+using Command = std::variant<PlaceOrder, CancelOrder, ReduceOrder, MoveOrder, RegisterSymbol,
+                             AddUser, AdjustBalance, SuspendUser, ResumeUser,
+                             RegisterSymbols, AddUsers, QueryUser, QueryTotals, QueryFingerprint>;
 struct RestingOrder {
     OrderKey key;
     UserId user;
@@ -156,9 +162,44 @@ struct CommandResult {
     bool operator==(const CommandResult &) const = default;
 };
 
+struct FrozenOrder {
+    OrderKey key;
+    Money amount;
+    bool operator==(const FrozenOrder&) const = default;
+};
+
+struct UserReport {
+    UserId user;
+    bool suspended;
+    std::uint64_t last_funding;
+    std::vector<Money> available;
+    std::vector<FrozenOrder> frozen;
+    std::vector<RestingOrder> orders;
+};
+
+struct CurrencyTotals {
+    CurrencyId currency;
+    std::int64_t available{};
+    std::int64_t frozen{};
+    std::int64_t fees{};
+    std::int64_t net_deposits{};
+    bool conserved() const;
+};
+
+struct TotalsReport {
+    std::vector<CurrencyTotals> currencies;
+};
+
+struct StateFingerprint {
+    std::uint64_t value;
+};
+
+using Report = std::variant<std::monostate, UserReport, TotalsReport, StateFingerprint>;
+
 struct Result {
     Seq seq;
     CommandResult outcome;
+    Report report{};
 };
 
 bool validate_command(const Command &command);

@@ -110,9 +110,7 @@ Result Engine::execute(const Command& command) {
         throw std::overflow_error{"command sequence exhausted"};
     }
     const Seq seq{++last_seq_};
-    return {seq,
-            std::visit([&](const auto& input) { return dispatch(input, seq); },
-                       command)};
+    return std::visit([&](const auto& input) { return answer(input, seq); }, command);
 }
 
 std::optional<std::vector<RestingOrder>> Engine::book_orders(
@@ -122,6 +120,101 @@ std::optional<std::vector<RestingOrder>> Engine::book_orders(
         return std::nullopt;
     }
     return found->second.book->resting_orders();
+}
+
+CommandResult Engine::dispatch(const RegisterSymbols& command, Seq) {
+    if (!validate_command(command)) {
+        return {Status::invalid_input, {}};
+    }
+    SymbolCatalog staged;
+    for (const auto& [id, market] : catalog_.markets_) {
+        staged.markets_.try_emplace(id, SymbolCatalog::Market{
+            market.spec, OrderBook::from_resting(id, market.book->resting_orders())});
+    }
+    for (const auto& spec : command.specs) {
+        const auto status = staged.add(spec);
+        if (status != Status::processed) {
+            return {status, {}};
+        }
+    }
+    catalog_.markets_.swap(staged.markets_);
+    return {Status::processed, {}};
+}
+
+CommandResult Engine::dispatch(const AddUsers& command, Seq) {
+    if (!validate_command(command)) {
+        return {Status::invalid_input, {}};
+    }
+    auto staged = ledger_;
+    for (const auto user : command.users) {
+        const auto status = staged.add_user(user);
+        if (status != Status::processed) {
+            return {status, {}};
+        }
+    }
+    ledger_.swap(staged);
+    return {Status::processed, {}};
+}
+
+Result Engine::answer(const QueryUser& command, Seq seq) {
+    if (!validate_command(command)) {
+        return {seq, {Status::invalid_input, {}}};
+    }
+    auto report = ledger_.user_report(command.user);
+    if (!report) {
+        return {seq, {Status::unknown_user, {}}};
+    }
+    for (const auto& entry : catalog_.markets_) {
+        for (const auto& order : entry.second.book->resting_orders()) {
+            if (order.user == command.user) {
+                report->orders.push_back(order);
+            }
+        }
+    }
+    return {seq, {Status::processed, {}}, std::move(*report)};
+}
+
+Result Engine::answer(const QueryTotals&, Seq seq) {
+    return {seq, {Status::processed, {}}, ledger_.totals()};
+}
+
+Result Engine::answer(const QueryFingerprint&, Seq seq) {
+    std::string canonical;
+    ledger_.append_canonical(canonical);
+    const auto number = [&canonical](auto value) {
+        canonical += std::to_string(value);
+        canonical += ',';
+    };
+    for (const auto& [id, market] : catalog_.markets_) {
+        const auto& spec = market.spec;
+        canonical += "symbol:";
+        number(id.value());
+        number(spec.base.value());
+        number(spec.quote.value());
+        number(spec.base_scale);
+        number(spec.quote_scale);
+        number(spec.maker_fee_per_lot);
+        number(spec.taker_fee_per_lot);
+        for (const auto& order : market.book->resting_orders()) {
+            canonical += "order:";
+            number(order.key.order.value());
+            number(order.user.value());
+            number(order.side == Side::bid);
+            number(order.price.value());
+            number(order.remaining.value());
+            number(order.reserve_bid_price.has_value());
+            number(order.reserve_bid_price ? order.reserve_bid_price->value() : 0);
+            number(order.priority_seq.value());
+            number(order.timestamp_ns);
+        }
+    }
+
+    std::uint64_t hash = 14695981039346656037ULL;
+    for (const char ch : canonical) {
+        hash ^= static_cast<unsigned char>(ch);
+        hash *= 1099511628211ULL;
+    }
+    return {seq, {Status::processed, {}}, StateFingerprint{hash}};
 }
 
 }  // namespace exchange

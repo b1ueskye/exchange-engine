@@ -85,3 +85,11 @@ add_test(NAME ledger COMMAND ledger_tests)
 add_executable(settlement_tests tests/settlement_test.cpp)
 target_link_libraries(settlement_tests PRIVATE exchange_lab)
 add_test(NAME settlement COMMAND settlement_tests)
+
+
+add_executable(spot_integration_tests tests/spot_integration_test.cpp)
+target_link_libraries(spot_integration_tests PRIVATE exchange_lab)
+add_test(NAME spot_integration COMMAND spot_integration_tests)
+
+add_executable(spot_demo app/spot_demo.cpp)
+target_link_libraries(spot_demo PRIVATE exchange_lab)

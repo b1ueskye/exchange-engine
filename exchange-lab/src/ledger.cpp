@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <set>
+#include <stdexcept>
 
 namespace exchange {
 
@@ -292,6 +293,105 @@ bool Ledger::apply_spot(OrderKey primary, const std::vector<Event>& events,
         }
     }
     return true;
+}
+
+bool CurrencyTotals::conserved() const {
+    const auto reserved = checked_add(available, frozen);
+    if (!reserved) {
+        return false;
+    }
+    const auto total = checked_add(*reserved, fees);
+    return total && *total == net_deposits;
+}
+
+std::optional<UserReport> Ledger::user_report(UserId user) const {
+    const auto it = accounts_.find(user);
+    if (it == accounts_.end()) {
+        return std::nullopt;
+    }
+    UserReport report{user, it->second.suspended, it->second.last_funding, {}, {}, {}};
+    for (const auto& [currency, units] : it->second.balances) {
+        report.available.push_back({currency, units});
+    }
+    for (const auto& [key, hold] : holds_) {
+        if (hold.user == user) {
+            report.frozen.push_back({{key.first, key.second}, hold.money});
+        }
+    }
+    return report;
+}
+
+TotalsReport Ledger::totals() const {
+    std::map<CurrencyId, CurrencyTotals> rows;
+    const auto row = [&rows](CurrencyId currency) -> CurrencyTotals& {
+        return rows.try_emplace(currency, CurrencyTotals{currency}).first->second;
+    };
+    const auto accumulate = [](std::int64_t& field, std::int64_t amount) {
+        const auto next = checked_add(field, amount);
+        if (!next) {
+            throw std::logic_error{"ledger report total out of range"};
+        }
+        field = *next;
+    };
+
+    for (const auto& account : accounts_) {
+        for (const auto& [currency, units] : account.second.balances) {
+            accumulate(row(currency).available, units);
+        }
+    }
+    for (const auto& entry : holds_) {
+        const auto& amount = entry.second.money;
+        accumulate(row(amount.currency).frozen, amount.units);
+    }
+    for (const auto& [currency, units] : fees_) {
+        row(currency).fees = units;
+    }
+    for (const auto& [currency, units] : net_deposits_) {
+        row(currency).net_deposits = units;
+    }
+
+    TotalsReport report;
+    report.currencies.reserve(rows.size());
+    for (const auto& entry : rows) {
+        report.currencies.push_back(entry.second);
+    }
+    return report;
+}
+
+void Ledger::append_canonical(std::string& out) const {
+    const auto number = [&out](auto value) {
+        out += std::to_string(value);
+        out += ',';
+    };
+    for (const auto& [id, account] : accounts_) {
+        out += "user:";
+        number(id.value());
+        number(account.last_funding);
+        number(account.suspended);
+        for (const auto& [currency, units] : account.balances) {
+            out += "available:";
+            number(currency.value());
+            number(units);
+        }
+    }
+    for (const auto& [key, hold] : holds_) {
+        out += "frozen:";
+        number(key.first.value());
+        number(key.second.value());
+        number(hold.user.value());
+        number(hold.money.currency.value());
+        number(hold.money.units);
+    }
+    for (const auto& [currency, units] : fees_) {
+        out += "fees:";
+        number(currency.value());
+        number(units);
+    }
+    for (const auto& [currency, units] : net_deposits_) {
+        out += "net:";
+        number(currency.value());
+        number(units);
+    }
 }
 
 }  // namespace exchange

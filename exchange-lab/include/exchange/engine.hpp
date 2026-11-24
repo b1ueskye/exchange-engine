@@ -27,6 +27,18 @@ public:
     const Ledger& ledger() const { return ledger_; }
 
 private:
+    CommandResult dispatch(const RegisterSymbols& command, Seq seq);
+    CommandResult dispatch(const AddUsers& command, Seq seq);
+
+    Result answer(const QueryUser& command, Seq seq);
+    Result answer(const QueryTotals& command, Seq seq);
+    Result answer(const QueryFingerprint& command, Seq seq);
+
+    template<class T>
+    Result answer(const T& command, Seq seq) {
+        return {seq, dispatch(command, seq)};
+    }
+
     CommandResult dispatch(const RegisterSymbol& command, Seq seq);
     CommandResult dispatch(const AddUser& command, Seq seq);
     CommandResult dispatch(const AdjustBalance& command, Seq seq);
