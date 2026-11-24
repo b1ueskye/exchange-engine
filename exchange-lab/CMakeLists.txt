@@ -101,3 +101,7 @@ add_test(NAME engine_bench_smoke COMMAND engine_bench mix)
 add_executable(layout_probe bench/layout_probe.cpp)
 target_link_libraries(layout_probe PRIVATE exchange_lab)
 add_test(NAME layout_probe_smoke COMMAND layout_probe)
+
+add_executable(order_node_pool_tests tests/order_node_pool_test.cpp)
+target_link_libraries(order_node_pool_tests PRIVATE exchange_lab)
+add_test(NAME order_node_pool COMMAND order_node_pool_tests)
