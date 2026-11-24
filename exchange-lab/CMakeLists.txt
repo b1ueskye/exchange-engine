@@ -135,3 +135,12 @@ add_test(NAME journal COMMAND journal_tests)
 add_executable(snapshot_tests tests/snapshot_test.cpp)
 target_link_libraries(snapshot_tests PRIVATE exchange_lab)
 add_test(NAME snapshot COMMAND snapshot_tests)
+
+add_executable(recovery_lab app/recovery_lab.cpp)
+target_link_libraries(recovery_lab PRIVATE exchange_lab Threads::Threads)
+add_test(NAME recovery_matrix
+    COMMAND ${CMAKE_COMMAND}
+        "-DLAB=$<TARGET_FILE:recovery_lab>"
+        "-DROOT=$<TARGET_FILE_DIR:recovery_lab>/recovery-matrix-data"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/recovery_matrix.cmake")
+set_tests_properties(recovery_matrix PROPERTIES TIMEOUT 30)

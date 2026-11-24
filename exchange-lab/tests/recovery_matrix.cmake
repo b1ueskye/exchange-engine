@@ -1,0 +1,36 @@
+if(NOT DEFINED ROOT OR NOT IS_ABSOLUTE "${ROOT}")
+    message(FATAL_ERROR "an absolute test root is required")
+endif()
+string(RANDOM LENGTH 16 ALPHABET 0123456789abcdef nonce)
+set(run "${ROOT}/run-${nonce}")
+if(EXISTS "${run}")
+    message(FATAL_ERROR "test directory already exists")
+endif()
+file(MAKE_DIRECTORY "${run}")
+
+foreach(mode IN ITEMS torn ack_lost before_publish after_publish bad async_close)
+    set(dir "${run}/${mode}")
+    execute_process(COMMAND "${LAB}" produce "${dir}" "${mode}"
+                    RESULT_VARIABLE producer OUTPUT_VARIABLE producer_out
+                    ERROR_VARIABLE producer_err)
+    set(expected 42)
+    if(mode STREQUAL "async_close")
+        set(expected 0)
+    endif()
+    if(NOT "${producer}" STREQUAL "${expected}")
+        message(FATAL_ERROR "producer ${mode}: ${producer}: ${producer_out}${producer_err}")
+    endif()
+
+    execute_process(COMMAND "${LAB}" restart "${dir}" "${mode}"
+                    RESULT_VARIABLE restart OUTPUT_VARIABLE restart_out
+                    ERROR_VARIABLE restart_err)
+    if(mode STREQUAL "bad")
+        if(NOT "${restart}" STREQUAL "3" OR NOT restart_err MATCHES "checksum mismatch")
+            message(FATAL_ERROR "bad log should be refused: ${restart_err}")
+        endif()
+    elseif(NOT "${restart}" STREQUAL "0" OR NOT restart_out MATCHES "run_id=restart seq=")
+        message(FATAL_ERROR "restart ${mode}: ${restart}: ${restart_out}${restart_err}")
+    endif()
+    message(STATUS "recovery case ${mode} checked")
+endforeach()
+file(REMOVE_RECURSE "${run}")
