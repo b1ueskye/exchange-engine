@@ -93,3 +93,7 @@ add_test(NAME spot_integration COMMAND spot_integration_tests)
 
 add_executable(spot_demo app/spot_demo.cpp)
 target_link_libraries(spot_demo PRIVATE exchange_lab)
+
+add_executable(engine_bench bench/engine_bench.cpp)
+target_link_libraries(engine_bench PRIVATE exchange_lab)
+add_test(NAME engine_bench_smoke COMMAND engine_bench mix)
