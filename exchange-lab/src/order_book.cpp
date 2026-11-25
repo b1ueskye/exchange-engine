@@ -20,6 +20,10 @@ OrderBook::OrderBook(SymbolId symbol, BookKind kind, std::size_t capacity)
 }
 
 std::unique_ptr<Book> OrderBook::clone() const {
+    return clone_order_book();
+}
+
+std::unique_ptr<OrderBook> OrderBook::clone_order_book() const {
     auto copy = std::make_unique<OrderBook>(symbol_, kind_, capacity_);
     for (const auto& order : resting_orders()) {
         if (copy->add_resting(order) != Status::processed) {
@@ -308,54 +312,71 @@ void OrderBook::decrease_resting(Index::iterator indexed, Quantity amount) {
     }
 }
 
-void OrderBook::apply_trades(const std::vector<Event>& events) {
-    for (const auto& event : events) {
-        if (const auto* trade = std::get_if<Trade>(&event)) {
-            decrease_resting(index_.find(trade->maker.order), trade->quantity);
+template <class Levels>
+Status OrderBook::check_level(const Levels& levels, const RestingOrder& order,
+                              const RestingOrder* replaced) const {
+    const auto target = levels.find(order.price);
+    if (target != levels.end()) {
+        const auto& level = target->second;
+        const auto replaced_quantity =
+            replaced && replaced->price == order.price
+                ? replaced->remaining.value()
+                : 0;
+        if (level.fifo.back().priority_seq >= order.priority_seq ||
+            !checked_add(level.total_remaining - replaced_quantity,
+                         order.remaining.value())) {
+            return Status::invalid_input;
         }
     }
+    return pool_ && !pool_->has_room() ? Status::capacity_exhausted
+                                       : Status::processed;
 }
 
-CommandResult OrderBook::place(const PlaceOrder& order, Seq seq) {
+Status OrderBook::check_remainder(const RestingOrder& order,
+                                  const RestingOrder* replaced) const {
+    if (!replaced && pool_ && index_.size() >= capacity_) {
+        return Status::capacity_exhausted;
+    }
+    return order.side == Side::ask ? check_level(asks_, order, replaced)
+                                   : check_level(bids_, order, replaced);
+}
+
+OrderBook::Prepared OrderBook::prepare(const PlaceOrder& order, Seq seq) const {
     if (!validate_command(order) || seq.value() == 0) {
-        return {Status::invalid_input, {}};
+        return {{Status::invalid_input, {}}};
     }
     if (order.key.symbol != symbol_) {
-        return {Status::unknown_symbol, {}};
+        return {{Status::unknown_symbol, {}}};
     }
     if (index_.contains(order.key.order)) {
-        return {Status::duplicate_order, {}};
+        return {{Status::duplicate_order, {}}};
     }
 
     if (const auto* budget = std::get_if<BudgetLimit>(&order.constraint)) {
-        return place_budget(order, *budget);
+        return prepare_budget(order, *budget);
     }
-    const auto* limit = std::get_if<LimitPrice>(&order.constraint);
-    if (!limit) {
-        return {Status::invalid_input, {}};
-    }
-    auto plan = plan_match(order, limit->price);
-    if (plan.remaining.value() > 0 && limit->policy == LimitPolicy::ioc) {
-        plan.events.emplace_back(RejectRemainder{order.key, order.user,
-                                                 plan.remaining,
-                                                 RejectReason::ioc_remainder});
-    } else if (plan.remaining.value() > 0) {
+    const auto& limit = std::get<LimitPrice>(order.constraint);
+    auto match = plan_match(order, limit.price);
+    std::optional<RestingOrder> after;
+    if (match.remaining.value() > 0 && limit.policy == LimitPolicy::ioc) {
+        match.events.emplace_back(RejectRemainder{order.key, order.user,
+                                                  match.remaining,
+                                                  RejectReason::ioc_remainder});
+    } else if (match.remaining.value() > 0) {
         std::optional<Price> reserve;
         if (order.side == Side::bid) {
-            reserve = limit->reserve_bid_price.value_or(limit->price);
+            reserve = limit.reserve_bid_price.value_or(limit.price);
         }
-        const RestingOrder remainder{
-            order.key,      order.user, order.side, limit->price,
-            plan.remaining, reserve,    seq,        order.timestamp_ns};
-        const auto status = order.side == Side::ask
-                                ? append_to(asks_, remainder, nullptr)
-                                : append_to(bids_, remainder, nullptr);
+        after.emplace(RestingOrder{order.key, order.user, order.side,
+                                   limit.price, match.remaining, reserve, seq,
+                                   order.timestamp_ns});
+        const auto status = check_remainder(*after);
         if (status != Status::processed) {
-            return {status, {}};
+            return {{status, {}}};
         }
     }
-    apply_trades(plan.events);
-    return {Status::processed, std::move(plan.events)};
+    return {
+        {Status::processed, std::move(match.events)}, order.key.order, after};
 }
 
 template <class Levels>
@@ -382,12 +403,13 @@ OrderBook::BudgetTrial OrderBook::trial_budget(const Levels& levels,
     return RejectReason::insufficient_liquidity;
 }
 
-CommandResult OrderBook::place_budget(const PlaceOrder& order,
-                                      BudgetLimit budget) {
-    const auto reject = [&order](RejectReason reason) -> CommandResult {
+OrderBook::Prepared OrderBook::prepare_budget(const PlaceOrder& order,
+                                              BudgetLimit budget) const {
+    const auto reject = [&order](RejectReason reason) -> Prepared {
         return {
-            Status::processed,
-            {RejectRemainder{order.key, order.user, order.quantity, reason}}};
+            {Status::processed,
+             {RejectRemainder{order.key, order.user, order.quantity, reason}}},
+            order.key.order};
     };
     const auto trial = order.side == Side::bid
                            ? trial_budget(asks_, order.quantity)
@@ -404,43 +426,46 @@ CommandResult OrderBook::place_budget(const PlaceOrder& order,
     if (plan.remaining.value() != 0) {
         throw std::logic_error{"budget trial disagrees with price levels"};
     }
-    apply_trades(plan.events);
-    return {Status::processed, std::move(plan.events)};
+    return {{Status::processed, std::move(plan.events)}, order.key.order};
 }
 
-CommandResult OrderBook::reduce_owned(OrderKey key, UserId user,
-                                      std::optional<Quantity> requested) {
+OrderBook::Prepared OrderBook::prepare_reduce(
+    OrderKey key, UserId user, std::optional<Quantity> requested) const {
     if (key.symbol != symbol_) {
-        return {Status::unknown_symbol, {}};
+        return {{Status::unknown_symbol, {}}};
     }
     const auto indexed = index_.find(key.order);
     if (indexed == index_.end() || indexed->second.node->user != user) {
-        return {Status::unknown_order, {}};
+        return {{Status::unknown_order, {}}};
     }
     const auto& order = *indexed->second.node;
     const auto amount =
         std::min(requested.value_or(order.remaining), order.remaining);
-
-    CommandResult result{Status::processed,
-                         {Reduce{key, user, order.side, order.price, amount,
-                                 amount == order.remaining}}};
-
-    decrease_resting(indexed, amount);
-    return result;
+    const bool removed = amount == order.remaining;
+    std::optional<RestingOrder> after;
+    if (!removed) {
+        after = order;
+        after->remaining = Quantity{order.remaining.value() - amount.value()};
+    }
+    return {{Status::processed,
+             {Reduce{key, user, order.side, order.price, amount, removed}}},
+            key.order,
+            after,
+            amount};
 }
 
-CommandResult OrderBook::cancel(const CancelOrder& command) {
+OrderBook::Prepared OrderBook::prepare(const CancelOrder& command, Seq) const {
     if (!validate_command(command)) {
-        return {Status::invalid_input, {}};
+        return {{Status::invalid_input, {}}};
     }
-    return reduce_owned(command.key, command.user, std::nullopt);
+    return prepare_reduce(command.key, command.user, std::nullopt);
 }
 
-CommandResult OrderBook::reduce(const ReduceOrder& command) {
+OrderBook::Prepared OrderBook::prepare(const ReduceOrder& command, Seq) const {
     if (!validate_command(command)) {
-        return {Status::invalid_input, {}};
+        return {{Status::invalid_input, {}}};
     }
-    return reduce_owned(command.key, command.user, command.quantity);
+    return prepare_reduce(command.key, command.user, command.quantity);
 }
 
 template <class Levels>
@@ -486,24 +511,26 @@ Status OrderBook::replace_resting(Levels& levels, Index::iterator indexed,
     return Status::processed;
 }
 
-CommandResult OrderBook::move(const MoveOrder& command, Seq seq) {
+OrderBook::Prepared OrderBook::prepare(const MoveOrder& command,
+                                       Seq seq) const {
     if (!validate_command(command) || seq.value() == 0) {
-        return {Status::invalid_input, {}};
+        return {{Status::invalid_input, {}}};
     }
     if (command.key.symbol != symbol_) {
-        return {Status::unknown_symbol, {}};
+        return {{Status::unknown_symbol, {}}};
     }
     const auto indexed = index_.find(command.key.order);
     if (indexed == index_.end() || indexed->second.node->user != command.user) {
-        return {Status::unknown_order, {}};
+        return {{Status::unknown_order, {}}};
     }
-    auto moved = *indexed->second.node;
+    const auto& original = *indexed->second.node;
+    auto moved = original;
     if (seq <= moved.priority_seq) {
-        return {Status::invalid_input, {}};
+        return {{Status::invalid_input, {}}};
     }
     if (moved.reserve_bid_price &&
-        moved.reserve_bid_price.value() < command.new_price) {
-        return {Status::price_over_reserve, {}};
+        *moved.reserve_bid_price < command.new_price) {
+        return {{Status::price_over_reserve, {}}};
     }
     moved.price = command.new_price;
     moved.priority_seq = seq;
@@ -514,25 +541,72 @@ CommandResult OrderBook::move(const MoveOrder& command, Seq seq) {
         moved.remaining,
         LimitPrice{moved.price, LimitPolicy::gtc, moved.reserve_bid_price},
         moved.timestamp_ns};
-    auto plan = plan_match(taker, moved.price);
-    if (plan.remaining.value() == 0) {
-        decrease_resting(indexed, moved.remaining);
-    } else {
-        moved.remaining = plan.remaining;
-        const auto status = moved.side == Side::ask
-                                ? replace_resting(asks_, indexed, moved)
-                                : replace_resting(bids_, indexed, moved);
+    auto match = plan_match(taker, moved.price);
+    if (match.remaining.value() == 0) {
+        return {{Status::processed, std::move(match.events)},
+                command.key.order,
+                {},
+                original.remaining};
+    }
+
+    moved.remaining = match.remaining;
+    const auto status = check_remainder(moved, &original);
+    if (status != Status::processed) {
+        return {{status, {}}};
+    }
+    return {{Status::processed, std::move(match.events)},
+            command.key.order,
+            moved,
+            Quantity{0},
+            true};
+}
+
+CommandResult OrderBook::apply(Prepared plan) {
+    if (plan.outcome.status != Status::processed) {
+        return std::move(plan.outcome);
+    }
+    if (plan.reduction.value() != 0) {
+        decrease_resting(index_.find(plan.primary), plan.reduction);
+    } else if (plan.after) {
+        const auto& order = *plan.after;
+        const auto update = [&](auto& levels) {
+            return plan.replace ? replace_resting(
+                                      levels, index_.find(plan.primary), order)
+                                : append_to(levels, order, nullptr);
+        };
+        const auto status =
+            order.side == Side::ask ? update(asks_) : update(bids_);
         if (status != Status::processed) {
             return {status, {}};
         }
     }
-    apply_trades(plan.events);
-    return {Status::processed, std::move(plan.events)};
+    for (const auto& event : plan.outcome.events) {
+        if (const auto* trade = std::get_if<Trade>(&event)) {
+            decrease_resting(index_.find(trade->maker.order), trade->quantity);
+        }
+    }
+    return std::move(plan.outcome);
+}
+
+CommandResult OrderBook::place(const PlaceOrder& order, Seq seq) {
+    return apply(prepare(order, seq));
+}
+
+CommandResult OrderBook::cancel(const CancelOrder& command) {
+    return apply(prepare(command, Seq{0}));
+}
+
+CommandResult OrderBook::reduce(const ReduceOrder& command) {
+    return apply(prepare(command, Seq{0}));
+}
+
+CommandResult OrderBook::move(const MoveOrder& command, Seq seq) {
+    return apply(prepare(command, seq));
 }
 
 std::unique_ptr<OrderBook> OrderBook::from_resting(
-    SymbolId symbol, const std::vector<RestingOrder>& orders,
-    BookKind kind, std::size_t capacity) {
+    SymbolId symbol, const std::vector<RestingOrder>& orders, BookKind kind,
+    std::size_t capacity) {
     auto staged = std::make_unique<OrderBook>(symbol, kind, capacity);
     for (const auto& order : orders) {
         if (staged->add_resting(order) != Status::processed) {

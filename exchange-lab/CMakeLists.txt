@@ -144,3 +144,10 @@ add_test(NAME recovery_matrix
         "-DROOT=$<TARGET_FILE_DIR:recovery_lab>/recovery-matrix-data"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/recovery_matrix.cmake")
 set_tests_properties(recovery_matrix PROPERTIES TIMEOUT 30)
+
+add_executable(dispatch_transaction_tests tests/dispatch_transaction_test.cpp)
+target_link_libraries(dispatch_transaction_tests PRIVATE exchange_lab)
+add_test(NAME dispatch_transaction COMMAND dispatch_transaction_tests)
+
+add_executable(dispatch_pipeline_bench bench/dispatch_pipeline_bench.cpp)
+target_link_libraries(dispatch_pipeline_bench PRIVATE exchange_lab Threads::Threads)

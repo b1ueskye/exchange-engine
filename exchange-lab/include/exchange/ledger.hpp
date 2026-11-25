@@ -8,8 +8,6 @@
 
 namespace exchange {
 
-class Book;
-
 std::optional<Money> required_hold(const PlaceOrder& order,
                                    const SymbolSpec& spec);
 
@@ -33,12 +31,7 @@ private:
     friend class Engine;
     friend class SnapshotStore;
 
-    bool consume(OrderKey key, UserId user, Money amount);
-    bool credit(UserId user, Money amount);
-    bool apply_trade(const Trade& trade, const SymbolSpec& spec);
-    bool align_hold(OrderKey key, const Book& book, const SymbolSpec& spec);
-    bool apply_spot(OrderKey primary, const std::vector<Event>& events,
-                    const Book& book, const SymbolSpec& spec);
+    class SpotUpdate;
 
     struct Account {
         std::map<CurrencyId, std::int64_t> balances;
@@ -53,8 +46,16 @@ private:
 
     using HoldKey = std::pair<SymbolId, OrderId>;
 
+    using Holds = std::map<HoldKey, Hold>;
+    struct Freeze {
+        std::int64_t* balance{};
+        Hold hold{UserId{0}, Money{CurrencyId{0}, 0}};
+    };
+    Status check_freeze(const PlaceOrder& order, const SymbolSpec& spec,
+                        Freeze& freeze);
+
     std::map<UserId, Account> accounts_;
-    std::map<HoldKey, Hold> holds_;
+    Holds holds_;
     std::map<CurrencyId, std::int64_t> net_deposits_;
     std::map<CurrencyId, std::int64_t> fees_;
 };

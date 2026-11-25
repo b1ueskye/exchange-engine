@@ -78,6 +78,7 @@ public:
         BookKind kind = BookKind::list, std::size_t capacity = 4096);
 
 private:
+    friend class Engine;
     friend struct OrderBookTestAccess;
 
     struct Level {
@@ -123,7 +124,6 @@ private:
 
     MatchPlan plan_match(const PlaceOrder& order,
                          std::optional<Price> limit) const;
-    void apply_trades(const std::vector<Event>& events);
     void decrease_resting(Index::iterator indexed, Quantity amount);
 
     template <class Levels>
@@ -138,10 +138,30 @@ private:
     template <class Levels>
     BudgetTrial trial_budget(const Levels& levels, Quantity quantity) const;
 
-    CommandResult place_budget(const PlaceOrder& order, BudgetLimit budget);
+    struct Prepared {
+        CommandResult outcome;
+        OrderId primary{0};
+        std::optional<RestingOrder> after{};
+        Quantity reduction{0};
+        bool replace{};
+    };
 
-    CommandResult reduce_owned(OrderKey key, UserId user,
-                               std::optional<Quantity> requested);
+    std::unique_ptr<OrderBook> clone_order_book() const;
+    Prepared prepare(const PlaceOrder& order, Seq seq) const;
+    Prepared prepare(const CancelOrder& command, Seq seq) const;
+    Prepared prepare(const ReduceOrder& command, Seq seq) const;
+    Prepared prepare(const MoveOrder& command, Seq seq) const;
+    Prepared prepare_budget(const PlaceOrder& order, BudgetLimit budget) const;
+    Prepared prepare_reduce(OrderKey key, UserId user,
+                            std::optional<Quantity> requested) const;
+    Status check_remainder(const RestingOrder& order,
+                           const RestingOrder* replaced = nullptr) const;
+    template <class Levels>
+    Status check_level(const Levels& levels, const RestingOrder& order,
+                       const RestingOrder* replaced) const;
+
+    // Any fallible remainder insertion runs before existing orders are changed.
+    CommandResult apply(Prepared plan);
 
     template <class Levels>
     Status replace_resting(Levels& levels, Index::iterator indexed,

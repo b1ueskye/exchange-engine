@@ -1,4 +1,5 @@
 #include "exchange/engine.hpp"
+#include "spot_update.hpp"
 
 #include <limits>
 #include <stdexcept>
@@ -16,7 +17,7 @@ Status SymbolCatalog::add(const SymbolSpec& spec, BookKind kind,
         return Status::symbol_exists;
     }
     markets_.try_emplace(spec.symbol,
-                         Market{spec, make_book(kind, spec.symbol, capacity)});
+                         Market{spec, std::make_unique<OrderBook>(spec.symbol, kind, capacity)});
     return Status::processed;
 }
 
@@ -57,32 +58,20 @@ CommandResult Engine::dispatch(const T& command, Seq seq) {
     }
 
     auto& market = found->second;
-    auto staged_ledger = ledger_;
+    Ledger::SpotUpdate settlement{ledger_, command.key, market.spec};
     if constexpr (std::is_same_v<T, PlaceOrder>) {
         if (market.book->find_order(command.key.order)) {
             return {Status::duplicate_order, {}};
         }
-        const auto frozen = staged_ledger.freeze(command, market.spec);
+        const auto frozen = settlement.freeze(command);
         if (frozen != Status::processed) {
             return {frozen, {}};
         }
     }
 
-    auto staged = market.book->clone();
-    auto result = [&] {
-        if constexpr (std::is_same_v<T, PlaceOrder>) {
-            return staged->place(command, seq);
-        } else if constexpr (std::is_same_v<T, CancelOrder>) {
-            return staged->cancel(command);
-        } else if constexpr (std::is_same_v<T, ReduceOrder>) {
-            return staged->reduce(command);
-        } else {
-            static_assert(std::is_same_v<T, MoveOrder>);
-            return staged->move(command, seq);
-        }
-    }();
-    if (result.status != Status::processed) {
-        return result;
+    auto plan = market.book->prepare(command, seq);
+    if (plan.outcome.status != Status::processed) {
+        return std::move(plan.outcome);
     }
     if constexpr (std::is_same_v<T, MoveOrder>) {
         const auto original = market.book->find_order(command.key.order);
@@ -94,14 +83,16 @@ CommandResult Engine::dispatch(const T& command, Seq seq) {
             }
         }
     }
-    if (!staged_ledger.apply_spot(command.key, result.events, *staged,
-                                  market.spec)) {
+    if (!settlement.prepare(*market.book, plan.outcome.events, plan.after)) {
         return {Status::settlement_failed, {}};
     }
-    // TODO: consider a more efficient swap or move operation for the order book
-    // and ledger
-    market.book.swap(staged);
-    ledger_.swap(staged_ledger);
+
+    // The book secures any remainder node and index entry before touching
+    // existing orders. Once that succeeds, neither commit allocates.
+    auto result = market.book->apply(std::move(plan));
+    if (result.status == Status::processed) {
+        settlement.commit();
+    }
     return result;
 }
 
@@ -141,7 +132,7 @@ CommandResult Engine::dispatch(const RegisterSymbols& command, Seq) {
     SymbolCatalog staged;
     for (const auto& [id, market] : catalog_.markets_) {
         staged.markets_.try_emplace(
-            id, SymbolCatalog::Market{market.spec, market.book->clone()});
+            id, SymbolCatalog::Market{market.spec, market.book->clone_order_book()});
     }
     for (const auto& spec : command.specs) {
         const auto status = staged.add(spec, book_kind_, pool_capacity_);

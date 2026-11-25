@@ -14,7 +14,7 @@ private:
     friend class SnapshotStore;
     struct Market {
         SymbolSpec spec;
-        std::unique_ptr<Book> book;
+        std::unique_ptr<OrderBook> book;
     };
 
     Status add(const SymbolSpec& spec, BookKind kind, std::size_t capacity);

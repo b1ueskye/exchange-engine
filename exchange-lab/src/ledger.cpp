@@ -1,8 +1,7 @@
 #include "exchange/ledger.hpp"
-#include "exchange/order_book.hpp"
+#include "spot_update.hpp"
 
 #include <algorithm>
-#include <set>
 #include <stdexcept>
 
 namespace exchange {
@@ -131,7 +130,8 @@ Status Ledger::resume(UserId user) {
     return Status::processed;
 }
 
-Status Ledger::freeze(const PlaceOrder& order, const SymbolSpec& spec) {
+Status Ledger::check_freeze(const PlaceOrder& order, const SymbolSpec& spec,
+                            Freeze& freeze) {
     const auto account = accounts_.find(order.user);
     if (account == accounts_.end()) {
         return Status::unknown_user;
@@ -152,9 +152,18 @@ Status Ledger::freeze(const PlaceOrder& order, const SymbolSpec& spec) {
         balance->second < money->units) {
         return Status::insufficient_funds;
     }
-    holds_.try_emplace(key, Hold{order.user, *money});
-    balance->second -= money->units;
+    freeze = {&balance->second, Hold{order.user, *money}};
     return Status::processed;
+}
+
+Status Ledger::freeze(const PlaceOrder& order, const SymbolSpec& spec) {
+    Freeze freeze;
+    const auto status = check_freeze(order, spec, freeze);
+    if (status == Status::processed) {
+        holds_.try_emplace({order.key.symbol, order.key.order}, freeze.hold);
+        *freeze.balance -= freeze.hold.money.units;
+    }
+    return status;
 }
 
 std::optional<Money> Ledger::available(UserId user, CurrencyId currency) const {
@@ -184,36 +193,99 @@ Money Ledger::fees(CurrencyId currency) const {
     return {currency, value_or_zero(fees_, currency)};
 }
 
-bool Ledger::consume(OrderKey key, UserId user, Money amount) {
-    const auto it = holds_.find({key.symbol, key.order});
-    if (it == holds_.end() || it->second.user != user ||
-        it->second.money.currency != amount.currency || amount.units < 0 ||
-        amount.units > it->second.money.units) {
-        return false;
+Ledger::SpotUpdate::AmountChange::AmountChange(Amounts& map,
+                                               CurrencyId currency,
+                                               std::int64_t* known)
+    : target(&map), existing(known) {
+    if (!existing) {
+        const auto found = map.find(currency);
+        if (found != map.end()) {
+            existing = &found->second;
+        } else {
+            Amounts storage;
+            pending = storage.extract(storage.try_emplace(currency, 0).first);
+        }
     }
-    it->second.money.units -= amount.units;
-    return true;
+    value = existing ? *existing : 0;
 }
 
-bool Ledger::credit(UserId user, Money amount) {
-    const auto it = accounts_.find(user);
-    if (it == accounts_.end() || amount.units < 0) {
+void Ledger::SpotUpdate::AmountChange::commit() {
+    if (existing) {
+        *existing = value;
+    } else {
+        pending.mapped() = value;
+        target->insert(std::move(pending));
+    }
+}
+
+Ledger::SpotUpdate::SpotUpdate(Ledger& ledger, OrderKey primary,
+                               const SymbolSpec& spec)
+    : ledger_(ledger),
+      primary_key_(primary.symbol, primary.order),
+      spec_(spec),
+      primary_existing_(ledger.holds_.end()) {}
+
+Status Ledger::SpotUpdate::freeze(const PlaceOrder& order) {
+    Freeze freeze;
+    const auto status = ledger_.check_freeze(order, spec_, freeze);
+    if (status == Status::processed) {
+        // Seed the overlay before settlement, including when the user trades
+        // on both sides and receives a credit in the same currency.
+        auto& balances = ledger_.accounts_.find(order.user)->second.balances;
+        const auto amount = freeze.hold.money;
+        balance(order.user, balances, amount.currency, freeze.balance).value -=
+            amount.units;
+        primary_ = freeze.hold;
+    }
+    return status;
+}
+
+Ledger::SpotUpdate::AmountChange& Ledger::SpotUpdate::balance(
+    UserId user, Amounts& amounts, CurrencyId currency, std::int64_t* known) {
+    const BalanceKey key{user, currency};
+    for (std::size_t i = 0; i < inline_count_; ++i) {
+        if (inline_balances_[i]->first == key) {
+            return inline_balances_[i]->second;
+        }
+    }
+    if (inline_count_ < inline_balances_.size()) {
+        auto& slot = inline_balances_[inline_count_];
+        slot.emplace(key, AmountChange{amounts, currency, known});
+        ++inline_count_;
+        return slot->second;
+    }
+    return extra_balances_.try_emplace(key, amounts, currency, known)
+        .first->second;
+}
+
+bool Ledger::SpotUpdate::credit(UserId user, Money amount) {
+    const auto account = ledger_.accounts_.find(user);
+    if (account == ledger_.accounts_.end() || amount.units < 0) {
         return false;
     }
-    auto& balances = it->second.balances;
-    const auto next =
-        checked_add(value_or_zero(balances, amount.currency), amount.units);
+    auto& change = balance(user, account->second.balances, amount.currency);
+    const auto next = checked_add(change.value, amount.units);
     if (!next) {
         return false;
     }
-    balances.try_emplace(amount.currency, 0).first->second = *next;
+    change.value = *next;
     return true;
 }
 
-bool Ledger::apply_trade(const Trade& trade, const SymbolSpec& spec) {
+bool Ledger::SpotUpdate::consume(Hold& hold, UserId user, Money amount) {
+    if (hold.user != user || hold.money.currency != amount.currency ||
+        amount.units < 0 || amount.units > hold.money.units) {
+        return false;
+    }
+    hold.money.units -= amount.units;
+    return true;
+}
+
+bool Ledger::SpotUpdate::apply_trade(const Trade& trade, Hold& maker) {
+    const auto& spec = spec_;
     const bool buy_takes = trade.taker_side == Side::bid;
-    const auto buy_key = buy_takes ? trade.taker : trade.maker;
-    const auto sell_key = buy_takes ? trade.maker : trade.taker;
+    auto& buy_hold = buy_takes ? *primary_ : maker;
+    auto& sell_hold = buy_takes ? maker : *primary_;
     const auto buyer = buy_takes ? trade.taker_user : trade.maker_user;
     const auto seller = buy_takes ? trade.maker_user : trade.taker_user;
     const auto buy_fee_rate =
@@ -235,72 +307,135 @@ bool Ledger::apply_trade(const Trade& trade, const SymbolSpec& spec) {
     if (!buy_paid || !sell_received || !fees_paid) {
         return false;
     }
-    const auto fees_after =
-        checked_add(value_or_zero(fees_, spec.quote), *fees_paid);
-    if (!fees_after || !consume(buy_key, buyer, {spec.quote, *buy_paid}) ||
-        !consume(sell_key, seller, *base) || !credit(buyer, *base) ||
+    if (!fee_) {
+        fee_.emplace(ledger_.fees_, spec.quote, nullptr);
+    }
+    const auto fees_after = checked_add(fee_->value, *fees_paid);
+    if (!fees_after || !consume(buy_hold, buyer, {spec.quote, *buy_paid}) ||
+        !consume(sell_hold, seller, *base) || !credit(buyer, *base) ||
         !credit(seller, {spec.quote, *sell_received})) {
         return false;
     }
-    fees_.try_emplace(spec.quote, 0).first->second = *fees_after;
+    fee_->value = *fees_after;
     return true;
 }
 
-bool Ledger::align_hold(OrderKey key, const Book& book,
-                        const SymbolSpec& spec) {
-    const auto hold = holds_.find({key.symbol, key.order});
-    if (hold == holds_.end()) {
-        return false;
-    }
-
+bool Ledger::SpotUpdate::align_hold(Hold& hold,
+                                    const std::optional<RestingOrder>& order) {
     std::int64_t keep = 0;
-    const auto order = book.find_order(key.order);
     if (order) {
-        if (order->user != hold->second.user ||
+        if (order->user != hold.user ||
             (order->side == Side::bid && !order->reserve_bid_price)) {
             return false;
         }
         const auto required =
             order->side == Side::bid
-                ? bid_hold(order->remaining, *order->reserve_bid_price, spec)
-                : base_amount(order->remaining, spec);
-        if (!required || required->currency != hold->second.money.currency ||
-            required->units > hold->second.money.units) {
+                ? bid_hold(order->remaining, *order->reserve_bid_price, spec_)
+                : base_amount(order->remaining, spec_);
+        if (!required || required->currency != hold.money.currency ||
+            required->units > hold.money.units) {
             return false;
         }
         keep = required->units;
     }
 
-    const auto refund = hold->second.money.units - keep;
-    if (refund > 0 &&
-        !credit(hold->second.user, {hold->second.money.currency, refund})) {
+    const auto refund = hold.money.units - keep;
+    if (refund > 0 && !credit(hold.user, {hold.money.currency, refund})) {
         return false;
     }
-    if (keep == 0) {
-        holds_.erase(hold);
-    } else {
-        hold->second.money.units = keep;
+    hold.money.units = keep;
+    return true;
+}
+
+bool Ledger::SpotUpdate::prepare(
+    const OrderBook& book, const std::vector<Event>& events,
+    const std::optional<RestingOrder>& primary_after) {
+    if (!primary_) {
+        primary_existing_ = ledger_.holds_.find(primary_key_);
+        if (primary_existing_ == ledger_.holds_.end()) {
+            return false;
+        }
+        primary_ = primary_existing_->second;
+    }
+
+    for (const auto& event : events) {
+        if (const auto* trade = std::get_if<Trade>(&event)) {
+            const auto found =
+                ledger_.holds_.find({trade->maker.symbol, trade->maker.order});
+            if (found == ledger_.holds_.end()) {
+                return false;
+            }
+            if (makers_.empty()) {
+                makers_.reserve(events.size());
+            }
+            // A single command visits each maker at most once.
+            auto& maker = makers_.emplace_back(found, found->second, trade);
+            if (!apply_trade(*trade, maker.hold)) {
+                return false;
+            }
+        }
+    }
+
+    // Preserve the reference implementation's order of refunds. Settlement
+    // applies all trade debits and credits before aligning any hold.
+    std::sort(makers_.begin(), makers_.end(),
+              [](const auto& left, const auto& right) {
+                  return left.existing->first < right.existing->first;
+              });
+    bool primary_aligned = false;
+    for (auto& maker : makers_) {
+        if (!primary_aligned && primary_key_ < maker.existing->first) {
+            if (!align_hold(*primary_, primary_after)) return false;
+            primary_aligned = true;
+        }
+        std::optional<RestingOrder> after;
+        if (!maker.trade->maker_filled) {
+            after = book.find_order(maker.trade->maker.order);
+            if (!after || after->remaining <= maker.trade->quantity)
+                return false;
+            after->remaining = Quantity{after->remaining.value() -
+                                        maker.trade->quantity.value()};
+        }
+        if (!align_hold(maker.hold, after)) return false;
+    }
+    if (!primary_aligned && !align_hold(*primary_, primary_after)) {
+        return false;
+    }
+    if (primary_existing_ == ledger_.holds_.end() &&
+        primary_->money.units != 0) {
+        Holds storage;
+        primary_pending_ =
+            storage.extract(storage.try_emplace(primary_key_, *primary_).first);
     }
     return true;
 }
 
-bool Ledger::apply_spot(OrderKey primary, const std::vector<Event>& events,
-                        const Book& book, const SymbolSpec& spec) {
-    std::set<HoldKey> touched{{primary.symbol, primary.order}};
-    for (const auto& event : events) {
-        if (const auto* trade = std::get_if<Trade>(&event)) {
-            if (!apply_trade(*trade, spec)) {
-                return false;
-            }
-            touched.emplace(trade->maker.symbol, trade->maker.order);
-        }
+void Ledger::SpotUpdate::commit() {
+    // Every missing node has already been allocated using the same default
+    // allocator. Node transfers compare only integer IDs and do not allocate.
+    for (std::size_t i = 0; i < inline_count_; ++i) {
+        inline_balances_[i]->second.commit();
     }
-    for (const auto& [symbol, id] : touched) {
-        if (!align_hold({symbol, id}, book, spec)) {
-            return false;
-        }
+    for (auto& [key, change] : extra_balances_) {
+        change.commit();
     }
-    return true;
+    if (fee_) fee_->commit();
+
+    const auto update = [this](Holds::iterator existing, const Hold& hold) {
+        if (hold.money.units == 0) {
+            ledger_.holds_.erase(existing);
+        } else {
+            existing->second = hold;
+        }
+    };
+    for (const auto& maker : makers_) {
+        update(maker.existing, maker.hold);
+    }
+    if (primary_existing_ != ledger_.holds_.end()) {
+        update(primary_existing_, *primary_);
+    } else if (primary_pending_) {
+        ledger_.holds_.insert(std::move(primary_pending_));
+    }
 }
 
 bool CurrencyTotals::conserved() const {
