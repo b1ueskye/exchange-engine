@@ -32,6 +32,8 @@ public:
     Seq next_sequence() const;
     Result execute_at(const Command& command, Seq seq);
     std::optional<std::vector<RestingOrder>> book_orders(SymbolId symbol) const;
+    std::optional<L2Snapshot> book_snapshot(SymbolId symbol,
+                                            std::size_t depth) const;
     const Ledger& ledger() const {
         return ledger_;
     }

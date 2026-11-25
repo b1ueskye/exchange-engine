@@ -151,3 +151,28 @@ add_test(NAME dispatch_transaction COMMAND dispatch_transaction_tests)
 
 add_executable(dispatch_pipeline_bench bench/dispatch_pipeline_bench.cpp)
 target_link_libraries(dispatch_pipeline_bench PRIVATE exchange_lab Threads::Threads)
+
+option(EXCHANGE_BUILD_API "Build the local HTTP API when its dependencies are installed" ON)
+if(EXCHANGE_BUILD_API AND UNIX)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(EXCHANGE_HTTP QUIET IMPORTED_TARGET libevent>=2.1.12 json-c>=0.16)
+    endif()
+    if(TARGET PkgConfig::EXCHANGE_HTTP)
+        add_executable(exchange_api app/api_server.cpp api/router.cpp)
+        target_include_directories(exchange_api PRIVATE api)
+        target_link_libraries(exchange_api PRIVATE exchange_lab PkgConfig::EXCHANGE_HTTP)
+
+        find_package(Python3 3.9 QUIET COMPONENTS Interpreter)
+        if(Python3_Interpreter_FOUND)
+            add_test(NAME exchange_http_api
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/http_api_test.py"
+                        "$<TARGET_FILE:exchange_api>")
+            set_tests_properties(exchange_http_api PROPERTIES TIMEOUT 15)
+        endif()
+    else()
+        message(STATUS "exchange_api skipped: install pkg-config, libevent >= 2.1.12 and json-c >= 0.16")
+    endif()
+elseif(EXCHANGE_BUILD_API)
+    message(STATUS "exchange_api skipped: the HTTP server supports macOS and Linux")
+endif()

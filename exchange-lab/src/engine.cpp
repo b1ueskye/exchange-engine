@@ -125,6 +125,15 @@ std::optional<std::vector<RestingOrder>> Engine::book_orders(
     return found->second.book->resting_orders();
 }
 
+std::optional<L2Snapshot> Engine::book_snapshot(SymbolId symbol,
+                                                std::size_t depth) const {
+    const auto found = catalog_.markets_.find(symbol);
+    if (found == catalog_.markets_.end()) {
+        return std::nullopt;
+    }
+    return found->second.book->snapshot(depth);
+}
+
 CommandResult Engine::dispatch(const RegisterSymbols& command, Seq) {
     if (!validate_command(command)) {
         return {Status::invalid_input, {}};

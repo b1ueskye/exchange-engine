@@ -81,6 +81,8 @@ struct CheckCommand {
     }
 };
 
+}  // namespace
+
 const char* status_name(Status status) {
     switch (status) {
         case Status::processed:
@@ -132,6 +134,8 @@ const char* reason_name(RejectReason reason) {
     }
     return "unknown_reason";
 }
+
+namespace {
 
 struct DescribeEvent {
     std::string operator()(const Trade& trade) const {

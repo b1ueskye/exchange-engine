@@ -212,6 +212,8 @@ struct Result {
 };
 
 bool validate_command(const Command &command);
+const char *status_name(Status status);
+const char *reason_name(RejectReason reason);
 std::string describe_event(const Event &event);
 std::string describe_result(const Result &result);
 
