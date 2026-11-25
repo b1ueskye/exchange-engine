@@ -25,16 +25,21 @@ void write_spec(Writer& out, const SymbolSpec& spec) {
     out.i(spec.quote_scale);
     out.i(spec.maker_fee_per_lot);
     out.i(spec.taker_fee_per_lot);
+    out.i(static_cast<std::int64_t>(spec.type)); out.i(spec.margin_buy); out.i(spec.margin_sell);
 }
 
-SymbolSpec read_spec(Reader& in) {
-    return {SymbolId{static_cast<std::uint32_t>(in.u(4))},
-            CurrencyId{static_cast<std::uint32_t>(in.u(4))},
-            CurrencyId{static_cast<std::uint32_t>(in.u(4))},
-            in.i(),
-            in.i(),
-            in.i(),
-            in.i()};
+SymbolSpec read_spec(Reader& in, unsigned version) {
+    SymbolSpec spec{SymbolId{static_cast<std::uint32_t>(in.u(4))},
+        CurrencyId{static_cast<std::uint32_t>(in.u(4))},
+        CurrencyId{static_cast<std::uint32_t>(in.u(4))}, in.i(), in.i(), in.i(), in.i()};
+    if (version >= 2) {
+        const auto raw_type = in.i();
+        if (!std::in_range<std::underlying_type_t<SymbolType>>(raw_type)) {
+            throw std::runtime_error{"symbol type outside underlying range"};
+        }
+        spec.type = static_cast<SymbolType>(raw_type); spec.margin_buy = in.i(); spec.margin_sell = in.i();
+    }
+    return spec;
 }
 
 }  // namespace wire
@@ -44,7 +49,7 @@ namespace {
 using wire::Reader;
 using wire::Writer;
 constexpr std::uint32_t log_magic = 0x31474f4c;
-constexpr std::uint8_t log_version = 1;
+constexpr std::uint8_t log_version = 2;
 constexpr std::size_t log_header = 17;
 
 void owner(Writer& out, OrderKey key, UserId user) {
@@ -177,7 +182,7 @@ OrderConstraint read_constraint(Reader& in) {
     throw std::runtime_error{"unknown constraint tag"};
 }
 
-Command decode_command(Reader& in) {
+Command decode_command(Reader& in, unsigned version) {
     switch (in.u(1)) {
         case 1: {
             const auto key = read_key(in);
@@ -195,7 +200,7 @@ Command decode_command(Reader& in) {
         case 4:
             return MoveOrder{read_key(in), UserId{in.u()}, Price{in.i()}};
         case 5:
-            return RegisterSymbol{wire::read_spec(in)};
+            return RegisterSymbol{wire::read_spec(in, version)};
         case 6:
             return AddUser{UserId{in.u()}};
         case 7:
@@ -211,7 +216,7 @@ Command decode_command(Reader& in) {
             RegisterSymbols batch;
             const auto count = read_count(in);
             for (std::uint32_t i = 0; i < count; ++i) {
-                batch.specs.push_back(wire::read_spec(in));
+                batch.specs.push_back(wire::read_spec(in, version));
             }
             return batch;
         }
@@ -265,7 +270,9 @@ LogScan scan_log(std::span<const std::byte> bytes) {
             result.truncated_tail = true;
             break;
         }
-        if (in.u(4) != log_magic || in.u(1) != log_version) {
+        if (in.u(4) != log_magic) { throw std::runtime_error{"invalid log magic"}; }
+        const auto version = static_cast<unsigned>(in.u(1));
+        if (version != 1 && version != log_version) {
             throw std::runtime_error{"unsupported log header"};
         }
         const auto length = static_cast<std::size_t>(in.u(4));
@@ -282,7 +289,7 @@ LogScan scan_log(std::span<const std::byte> bytes) {
         if (in.u(4) != wire::checksum(covered)) {
             throw std::runtime_error{"log checksum mismatch"};
         }
-        auto command = decode_command(payload);
+        auto command = decode_command(payload, version);
         payload.end();
         result.records.push_back({seq, std::move(command)});
         previous = seq;

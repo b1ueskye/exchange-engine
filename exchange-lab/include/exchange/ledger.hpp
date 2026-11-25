@@ -2,6 +2,7 @@
 #define EXCHANGE_LEDGER_HPP
 
 #include "exchange/model.hpp"
+#include "exchange/position_traversal_order.hpp"
 
 #include <map>
 #include <utility>
@@ -32,6 +33,9 @@ public:
 private:
     friend class Engine;
     friend class SnapshotStore;
+    friend struct FuturesRisk;
+    friend struct SpotRisk;
+    friend struct MarginTestAccess;
 
     bool consume(OrderKey key, UserId user, Money amount);
     bool credit(UserId user, Money amount);
@@ -44,6 +48,8 @@ private:
         std::map<CurrencyId, std::int64_t> balances;
         std::uint64_t last_funding{};
         bool suspended{};
+        std::map<SymbolId, MarginPosition> positions;
+        PositionTraversalOrder position_order;
     };
 
     struct Hold {
@@ -57,6 +63,7 @@ private:
     std::map<HoldKey, Hold> holds_;
     std::map<CurrencyId, std::int64_t> net_deposits_;
     std::map<CurrencyId, std::int64_t> fees_;
+    std::map<SymbolId, LastPrice> last_prices_;
 };
 
 }  // namespace exchange

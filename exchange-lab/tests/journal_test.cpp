@@ -60,7 +60,7 @@ int main() {
     corrupt.back() ^= std::byte{1};
     checks.require(reject(corrupt), "checksum error");
     auto version = log;
-    version.at(4) = std::byte{2};
+    version.at(4) = std::byte{9};
     checks.require(reject(version), "unknown version");
     auto length = log;
     length.at(8) = std::byte{0x80};
@@ -82,5 +82,34 @@ int main() {
     checks.require(first && blocked && failed.failed() &&
                    failed.state().last_sequence() == Seq{0} &&
                    !failed.state().ledger().available(user, spec.quote), "write failure blocks commit");
+    wire::Writer old_spec;
+    old_spec.u(5,1); // RegisterSymbol 标签
+    old_spec.u(7,4);old_spec.u(10,4);old_spec.u(20,4);
+    old_spec.i(1);old_spec.i(1);old_spec.i(0);old_spec.i(0);
+    wire::Writer old_frame;
+    old_frame.u(0x31474f4c,4);old_frame.u(1,1);old_frame.u(old_spec.data.size(),4);old_frame.u(1);
+    old_frame.data.insert(old_frame.data.end(),old_spec.data.begin(),old_spec.data.end());
+    old_frame.u(wire::checksum(old_frame.data),4);
+    const auto newer=encode_record(Seq{2},AddUser{UserId{9}});
+    old_frame.data.insert(old_frame.data.end(),newer.begin(),newer.end());
+    Engine migrated;
+    const auto mixed=scan_log(old_frame.data);
+    const auto migrated_results=replay_log(migrated,mixed);
+    checks.require(migrated_results.size()==2 &&
+        migrated_results[0].outcome.status==Status::processed &&
+        migrated_results[1].outcome.status==Status::processed,"mixed v1/v2 log migrates spot spec");
+    for (const int raw : {-1,256}) {
+        SymbolSpec invalid{SymbolId{1},CurrencyId{10},CurrencyId{20},1,1,0,0};
+        invalid.type=static_cast<SymbolType>(raw);
+        const auto encoded=encode_record(Seq{1},RegisterSymbol{invalid});
+        const auto decoded=scan_log(encoded);
+        Engine online, restored;
+        const auto before=online.execute(RegisterSymbol{invalid});
+        const auto replayed=replay_log(restored,decoded);
+        checks.require(std::get<RegisterSymbol>(decoded.records.front().command).spec.type==invalid.type &&
+            before.outcome.status==Status::invalid_input && replayed.size()==1 &&
+            replayed.front().outcome==before.outcome,"invalid product type survives log replay");
+    }
+
     return checks.exit_code();
 }

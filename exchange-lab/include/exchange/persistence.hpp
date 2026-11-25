@@ -77,7 +77,7 @@ struct Reader {
 
 std::uint32_t checksum(std::span<const std::byte> bytes);
 void write_spec(Writer& out, const SymbolSpec& spec);
-SymbolSpec read_spec(Reader& in);
+SymbolSpec read_spec(Reader& in, unsigned version = 2);
 
 }  // namespace wire
 

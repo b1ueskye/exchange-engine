@@ -1,4 +1,5 @@
 #include "exchange/engine.hpp"
+#include "exchange/futures_risk.hpp"
 
 #include <limits>
 #include <stdexcept>
@@ -15,8 +16,9 @@ Status SymbolCatalog::add(const SymbolSpec& spec, BookKind kind,
     if (markets_.contains(spec.symbol)) {
         return Status::symbol_exists;
     }
-    markets_.try_emplace(spec.symbol,
-                         Market{spec, make_book(kind, spec.symbol, capacity)});
+    markets_.try_emplace(
+        spec.symbol,
+        Market{spec, make_book(kind, spec.symbol, capacity, spec.type)});
     return Status::processed;
 }
 
@@ -48,61 +50,82 @@ CommandResult Engine::dispatch(const ResumeUser& command, Seq) {
 
 template <class T>
 CommandResult Engine::dispatch(const T& command, Seq seq) {
-    if (!validate_command(command)) {
-        return {Status::invalid_input, {}};
-    }
     const auto found = catalog_.markets_.find(command.key.symbol);
     if (found == catalog_.markets_.end()) {
         return {Status::unknown_symbol, {}};
     }
-
     auto& market = found->second;
+    if (!validate_command(command, market.spec.type)) {
+        return {Status::invalid_input, {}};
+    }
+    const SpecLookup lookup = [&](SymbolId id) -> const SymbolSpec& {
+        return catalog_.markets_.at(id).spec;
+    };
+    const bool futures = market.spec.type == SymbolType::futures;
     auto staged_ledger = ledger_;
-    if constexpr (std::is_same_v<T, PlaceOrder>) {
-        if (market.book->find_order(command.key.order)) {
-            return {Status::duplicate_order, {}};
-        }
-        const auto frozen = staged_ledger.freeze(command, market.spec);
-        if (frozen != Status::processed) {
-            return {frozen, {}};
-        }
-    }
-
-    auto staged = market.book->clone();
-    auto result = [&] {
+    try {
         if constexpr (std::is_same_v<T, PlaceOrder>) {
-            return staged->place(command, seq);
-        } else if constexpr (std::is_same_v<T, CancelOrder>) {
-            return staged->cancel(command);
-        } else if constexpr (std::is_same_v<T, ReduceOrder>) {
-            return staged->reduce(command);
-        } else {
-            static_assert(std::is_same_v<T, MoveOrder>);
-            return staged->move(command, seq);
-        }
-    }();
-    if (result.status != Status::processed) {
-        return result;
-    }
-    if constexpr (std::is_same_v<T, MoveOrder>) {
-        const auto original = market.book->find_order(command.key.order);
-        if (original && original->side == Side::ask) {
-            const auto per_lot =
-                quote_notional(Quantity{1}, command.new_price, market.spec);
-            if (!per_lot || per_lot->units < market.spec.taker_fee_per_lot) {
-                return {Status::invalid_input, {}};
+            if (market.book->find_order(command.key.order)) {
+                return {Status::duplicate_order, {}};
+            }
+            const auto status =
+                futures ? FuturesRisk::reserve(staged_ledger, command,
+                                               market.spec, lookup)
+                        : SpotRisk::reserve(staged_ledger, command, market.spec,
+                                            lookup);
+            if (status != Status::processed) {
+                if (futures && status == Status::insufficient_funds) {
+                    ledger_.swap(staged_ledger);
+                }
+                return {status, {}};
             }
         }
-    }
-    if (!staged_ledger.apply_spot(command.key, result.events, *staged,
-                                  market.spec)) {
+        auto staged = market.book->clone();
+        auto result = [&] {
+            if constexpr (std::is_same_v<T, PlaceOrder>) {
+                return staged->place(command, seq);
+            } else if constexpr (std::is_same_v<T, CancelOrder>) {
+                return staged->cancel(command);
+            } else if constexpr (std::is_same_v<T, ReduceOrder>) {
+                return staged->reduce(command);
+            } else {
+                return staged->move(command, seq);
+            }
+        }();
+        if (result.status != Status::processed) {
+            return result;
+        }
+        if constexpr (std::is_same_v<T, MoveOrder>) {
+            const auto original = market.book->find_order(command.key.order);
+            if (!futures && original && original->side == Side::ask) {
+                const auto amount =
+                    quote_notional(Quantity{1}, command.new_price, market.spec);
+                if (!amount || amount->units < market.spec.taker_fee_per_lot) {
+                    return {Status::invalid_input, {}};
+                }
+            }
+        }
+        const PlaceOrder* placed = nullptr;
+        if constexpr (std::is_same_v<T, PlaceOrder>) {
+            placed = &command;
+        }
+        const auto settled =
+            futures ? FuturesRisk::settle(staged_ledger, placed, command.key,
+                                          result.events, *staged, market.spec)
+                    : SpotRisk::settle(staged_ledger, command.key,
+                                       result.events, *staged, market.spec);
+        if (!settled) {
+            return {Status::settlement_failed, {}};
+        }
+        if (send_l2_) {
+            FuturesRisk::refresh(staged_ledger, market.spec.symbol, *staged);
+        }
+        market.book.swap(staged);
+        ledger_.swap(staged_ledger);
+        return result;
+    } catch (const std::overflow_error&) {
         return {Status::settlement_failed, {}};
     }
-    // TODO: consider a more efficient swap or move operation for the order book
-    // and ledger
-    market.book.swap(staged);
-    ledger_.swap(staged_ledger);
-    return result;
 }
 
 Seq Engine::next_sequence() const {
@@ -183,16 +206,25 @@ Result Engine::answer(const QueryUser& command, Seq seq) {
             }
         }
     }
+    FuturesRisk::reports(ledger_, *report,
+                         [&](SymbolId id) -> const SymbolSpec& {
+                             return catalog_.markets_.at(id).spec;
+                         });
     return {seq, {Status::processed, {}}, std::move(*report)};
 }
 
 Result Engine::answer(const QueryTotals&, Seq seq) {
-    return {seq, {Status::processed, {}}, ledger_.totals()};
+    auto report = ledger_.totals();
+    FuturesRisk::totals(ledger_, report, [&](SymbolId id) -> const SymbolSpec& {
+        return catalog_.markets_.at(id).spec;
+    });
+    return {seq, {Status::processed, {}}, std::move(report)};
 }
 
 Result Engine::answer(const QueryFingerprint&, Seq seq) {
     std::string canonical;
     ledger_.append_canonical(canonical);
+    canonical += send_l2_ ? "l2=1;" : "l2=0;";
     const auto number = [&canonical](auto value) {
         canonical += std::to_string(value);
         canonical += ',';
@@ -207,6 +239,9 @@ Result Engine::answer(const QueryFingerprint&, Seq seq) {
         number(spec.quote_scale);
         number(spec.maker_fee_per_lot);
         number(spec.taker_fee_per_lot);
+        number(static_cast<int>(spec.type));
+        number(spec.margin_buy);
+        number(spec.margin_sell);
         for (const auto& order : market.book->resting_orders()) {
             canonical += "order:";
             number(order.key.order.value());

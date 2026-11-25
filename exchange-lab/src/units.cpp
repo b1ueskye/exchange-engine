@@ -21,11 +21,15 @@ std::optional<Money> make_money(CurrencyId currency,
 }  // namespace
 
 bool valid_symbol(const SymbolSpec& spec) {
-    return spec.symbol.value() != 0 && spec.base.value() != 0 &&
-           spec.quote.value() != 0 && spec.base != spec.quote &&
-           spec.base_scale > 0 && spec.quote_scale > 0 &&
-           spec.maker_fee_per_lot >= 0 &&
-           spec.taker_fee_per_lot >= spec.maker_fee_per_lot;
+    const bool common = spec.symbol.value() > 0 && spec.quote.value() > 0 &&
+                        spec.maker_fee_per_lot >= 0 &&
+                        spec.taker_fee_per_lot >= spec.maker_fee_per_lot;
+    if (spec.type == SymbolType::futures) {
+        return common && spec.margin_buy >= 0 && spec.margin_sell >= 0;
+    }
+    return common && spec.type == SymbolType::spot && spec.base.value() > 0 &&
+           spec.base != spec.quote && spec.base_scale > 0 &&
+           spec.quote_scale > 0;
 }
 
 std::optional<std::int64_t> checked_add(std::int64_t a, std::int64_t b) {

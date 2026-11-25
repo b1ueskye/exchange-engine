@@ -48,12 +48,12 @@ public:
 };
 
 std::unique_ptr<Book> make_book(BookKind kind, SymbolId symbol,
-                                std::size_t capacity);
+                                std::size_t capacity, SymbolType type = SymbolType::spot);
 
 class OrderBook final : public Book {
 public:
     explicit OrderBook(SymbolId symbol, BookKind kind = BookKind::list,
-                       std::size_t capacity = 4096);
+                       std::size_t capacity = 4096, SymbolType type = SymbolType::spot);
     std::unique_ptr<Book> clone() const override;
     OrderBook(const OrderBook&) = delete;
     OrderBook& operator=(const OrderBook&) = delete;
@@ -75,7 +75,8 @@ public:
 
     static std::unique_ptr<OrderBook> from_resting(
         SymbolId symbol, const std::vector<RestingOrder>& orders,
-        BookKind kind = BookKind::list, std::size_t capacity = 4096);
+        BookKind kind = BookKind::list, std::size_t capacity = 4096,
+        SymbolType type = SymbolType::spot);
 
 private:
     friend struct OrderBookTestAccess;
@@ -148,6 +149,7 @@ private:
                            const RestingOrder& order);
 
     SymbolId symbol_;
+    SymbolType type_;
     BookKind kind_;
     std::size_t capacity_;
     std::unique_ptr<OrderNodePool> pool_;

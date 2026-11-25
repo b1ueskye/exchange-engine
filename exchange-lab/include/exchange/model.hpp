@@ -3,6 +3,7 @@
 
 #include "exchange/order_draft.hpp"
 #include "exchange/units.hpp"
+#include "exchange/positions.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -183,6 +184,7 @@ struct UserReport {
     std::vector<Money> available;
     std::vector<FrozenOrder> frozen;
     std::vector<RestingOrder> orders;
+    std::vector<PositionReport> positions;
 };
 
 struct CurrencyTotals {
@@ -191,11 +193,13 @@ struct CurrencyTotals {
     std::int64_t frozen{};
     std::int64_t fees{};
     std::int64_t net_deposits{};
+    std::int64_t positions{};
     bool conserved() const;
 };
 
 struct TotalsReport {
     std::vector<CurrencyTotals> currencies;
+    std::vector<OpenInterest> open_interest;
 };
 
 struct StateFingerprint {
@@ -212,6 +216,7 @@ struct Result {
 };
 
 bool validate_command(const Command &command);
+bool validate_command(const Command& command, SymbolType type);
 std::string describe_event(const Event &event);
 std::string describe_result(const Result &result);
 

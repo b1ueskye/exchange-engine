@@ -173,4 +173,17 @@ std::string describe_result(const Result& result) {
     return text;
 }
 
+bool validate_command(const Command& command, SymbolType type) {
+    if (type == SymbolType::futures) {
+        if (const auto* p = std::get_if<PlaceOrder>(&command)) {
+            auto shape = *p;
+            if (auto* limit = std::get_if<LimitPrice>(&shape.constraint)) {
+                limit->reserve_bid_price.reset();
+            }
+            return validate_command(Command{shape});
+        }
+    }
+    return validate_command(command);
+}
+
 }  // namespace exchange

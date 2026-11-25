@@ -45,6 +45,8 @@ struct Money {
     bool operator==(const Money&) const = default;
 };
 
+enum class SymbolType { spot = 0, futures = 1 };
+
 struct SymbolSpec {
     SymbolId symbol;
     CurrencyId base;
@@ -53,6 +55,9 @@ struct SymbolSpec {
     std::int64_t quote_scale;
     std::int64_t maker_fee_per_lot;
     std::int64_t taker_fee_per_lot;
+    SymbolType type = SymbolType::spot;
+    std::int64_t margin_buy{};
+    std::int64_t margin_sell{};
 };
 
 bool valid_symbol(const SymbolSpec& spec);

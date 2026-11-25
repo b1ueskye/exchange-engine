@@ -23,8 +23,8 @@ private:
 
 class Engine {
 public:
-    explicit Engine(BookKind kind = BookKind::list, std::size_t capacity = 4096)
-        : book_kind_(kind), pool_capacity_(capacity) {}
+    explicit Engine(BookKind kind = BookKind::list, std::size_t capacity = 4096, bool send_l2 = true)
+        : book_kind_(kind), pool_capacity_(capacity), send_l2_(send_l2) {}
     Result execute(const Command& command);
     Seq last_sequence() const {
         return Seq{last_seq_};
@@ -64,6 +64,7 @@ private:
     std::uint64_t last_seq_{};
     BookKind book_kind_;
     std::size_t pool_capacity_;
+    bool send_l2_;
 };
 
 }  // namespace exchange

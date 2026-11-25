@@ -74,11 +74,8 @@ Status Ledger::adjust(const AdjustBalance& cmd) {
     if (!next || !net) {
         return Status::invalid_input;
     }
-    if (*next < 0) {
+    if (cmd.amount.units < 0 && *next < 0) {
         return Status::insufficient_funds;
-    }
-    if (*net < 0) {
-        return Status::invalid_input;
     }
 
     auto [balance, created] =
@@ -112,7 +109,7 @@ Status Ledger::suspend(UserId user) {
     const auto reserved = std::any_of(
         holds_.begin(), holds_.end(),
         [user](const auto& row) { return row.second.user == user; });
-    if (nonzero || reserved) {
+    if (nonzero || reserved || !it->second.positions.empty()) {
         return Status::account_not_empty;
     }
     it->second.suspended = true;
@@ -178,6 +175,7 @@ void Ledger::swap(Ledger& other) noexcept {
     holds_.swap(other.holds_);
     net_deposits_.swap(other.net_deposits_);
     fees_.swap(other.fees_);
+    last_prices_.swap(other.last_prices_);
 }
 
 Money Ledger::fees(CurrencyId currency) const {
@@ -309,7 +307,9 @@ bool CurrencyTotals::conserved() const {
         return false;
     }
     const auto total = checked_add(*reserved, fees);
-    return total && *total == net_deposits;
+    const auto including_positions =
+        total ? checked_add(*total, positions) : std::nullopt;
+    return including_positions && *including_positions == net_deposits;
 }
 
 std::optional<UserReport> Ledger::user_report(UserId user) const {
@@ -378,11 +378,32 @@ void Ledger::append_canonical(std::string& out) const {
         number(id.value());
         number(account.last_funding);
         number(account.suspended);
+        out += "position-order:";
+        number(account.position_order.one());
+        number(account.position_order.slots().size());
+        for (const auto key : account.position_order.slots()) {
+            number(key);
+        }
+        for (const auto& [symbol, p] : account.positions) {
+            out += "position:";
+            number(symbol.value());
+            number(p.signed_quantity);
+            number(p.cost_sum);
+            number(p.profit);
+            number(p.pending_buy);
+            number(p.pending_sell);
+        }
         for (const auto& [currency, units] : account.balances) {
             out += "available:";
             number(currency.value());
             number(units);
         }
+    }
+    for (const auto& [symbol, p] : last_prices_) {
+        out += "last-price:";
+        number(symbol.value());
+        number(p.ask);
+        number(p.bid);
     }
     for (const auto& [key, hold] : holds_) {
         out += "frozen:";

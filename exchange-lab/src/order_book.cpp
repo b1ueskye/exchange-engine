@@ -6,8 +6,9 @@
 
 namespace exchange {
 
-OrderBook::OrderBook(SymbolId symbol, BookKind kind, std::size_t capacity)
-    : symbol_{symbol}, kind_{kind}, capacity_{capacity} {
+OrderBook::OrderBook(SymbolId symbol, BookKind kind, std::size_t capacity,
+                     SymbolType type)
+    : symbol_{symbol}, type_{type}, kind_{kind}, capacity_{capacity} {
     if (symbol.value() == 0) {
         throw std::invalid_argument{"order book requires a symbol"};
     }
@@ -20,7 +21,7 @@ OrderBook::OrderBook(SymbolId symbol, BookKind kind, std::size_t capacity)
 }
 
 std::unique_ptr<Book> OrderBook::clone() const {
-    auto copy = std::make_unique<OrderBook>(symbol_, kind_, capacity_);
+    auto copy = std::make_unique<OrderBook>(symbol_, kind_, capacity_, type_);
     for (const auto& order : resting_orders()) {
         if (copy->add_resting(order) != Status::processed) {
             throw std::logic_error{"could not clone order book"};
@@ -33,8 +34,8 @@ std::unique_ptr<Book> OrderBook::clone() const {
 }
 
 std::unique_ptr<Book> make_book(BookKind kind, SymbolId symbol,
-                                std::size_t capacity) {
-    return std::make_unique<OrderBook>(symbol, kind, capacity);
+                                std::size_t capacity, SymbolType type) {
+    return std::make_unique<OrderBook>(symbol, kind, capacity, type);
 }
 
 std::optional<Price> OrderBook::best_bid() const {
@@ -60,7 +61,8 @@ bool OrderBook::valid_resting(const RestingOrder& order) const {
     }
     if (order.side == Side::bid) {
         return order.reserve_bid_price &&
-               order.reserve_bid_price.value() >= order.price;
+               (type_ == SymbolType::futures ||
+                order.reserve_bid_price.value() >= order.price);
     }
     return order.side == Side::ask && !order.reserve_bid_price;
 }
@@ -317,7 +319,7 @@ void OrderBook::apply_trades(const std::vector<Event>& events) {
 }
 
 CommandResult OrderBook::place(const PlaceOrder& order, Seq seq) {
-    if (!validate_command(order) || seq.value() == 0) {
+    if (!validate_command(order, type_) || seq.value() == 0) {
         return {Status::invalid_input, {}};
     }
     if (order.key.symbol != symbol_) {
@@ -501,7 +503,7 @@ CommandResult OrderBook::move(const MoveOrder& command, Seq seq) {
     if (seq <= moved.priority_seq) {
         return {Status::invalid_input, {}};
     }
-    if (moved.reserve_bid_price &&
+    if (type_ == SymbolType::spot && moved.reserve_bid_price &&
         moved.reserve_bid_price.value() < command.new_price) {
         return {Status::price_over_reserve, {}};
     }
@@ -531,9 +533,9 @@ CommandResult OrderBook::move(const MoveOrder& command, Seq seq) {
 }
 
 std::unique_ptr<OrderBook> OrderBook::from_resting(
-    SymbolId symbol, const std::vector<RestingOrder>& orders,
-    BookKind kind, std::size_t capacity) {
-    auto staged = std::make_unique<OrderBook>(symbol, kind, capacity);
+    SymbolId symbol, const std::vector<RestingOrder>& orders, BookKind kind,
+    std::size_t capacity, SymbolType type) {
+    auto staged = std::make_unique<OrderBook>(symbol, kind, capacity, type);
     for (const auto& order : orders) {
         if (staged->add_resting(order) != Status::processed) {
             throw std::invalid_argument{"invalid resting state"};

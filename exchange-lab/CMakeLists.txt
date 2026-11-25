@@ -11,6 +11,7 @@ add_library(exchange_lab STATIC
     src/ledger.cpp
     src/persistence.cpp
     src/snapshot.cpp
+    src/futures_risk.cpp
 )
 target_compile_features(exchange_lab PUBLIC cxx_std_20)
 target_include_directories(exchange_lab PUBLIC include)
@@ -144,3 +145,25 @@ add_test(NAME recovery_matrix
         "-DROOT=$<TARGET_FILE_DIR:recovery_lab>/recovery-matrix-data"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/recovery_matrix.cmake")
 set_tests_properties(recovery_matrix PROPERTIES TIMEOUT 30)
+
+add_executable(futures_risk_tests tests/futures_risk_test.cpp)
+target_link_libraries(futures_risk_tests PRIVATE exchange_lab)
+add_test(NAME futures_risk COMMAND futures_risk_tests)
+
+add_executable(futures_snapshot_tests tests/futures_snapshot_test.cpp)
+target_link_libraries(futures_snapshot_tests PRIVATE exchange_lab)
+add_test(NAME futures_snapshot COMMAND futures_snapshot_tests)
+
+add_executable(integration_matrix_tests tests/integration_matrix_test.cpp)
+target_link_libraries(integration_matrix_tests PRIVATE exchange_lab Threads::Threads)
+add_test(NAME integration_matrix COMMAND integration_matrix_tests)
+set_tests_properties(integration_matrix PROPERTIES TIMEOUT 60)
+
+add_executable(futures_recovery_lab app/futures_recovery_lab.cpp)
+target_include_directories(futures_recovery_lab PRIVATE tests)
+target_link_libraries(futures_recovery_lab PRIVATE exchange_lab)
+add_test(NAME futures_recovery_matrix
+    COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:futures_recovery_lab>
+            -DROOT=$<TARGET_FILE_DIR:futures_recovery_lab>/futures-recovery-tests
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/futures_recovery_matrix.cmake)
+set_tests_properties(futures_recovery_matrix PROPERTIES TIMEOUT 60)
